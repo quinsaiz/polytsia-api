@@ -12,3 +12,59 @@ dependencies = [
     "uvicorn>=0.49.0",
     "wait-for-it>=2.3.0",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+    "ruff>=0.15.19",
+    "sqlalchemy[mypy]>=2.0.51",
+]
+
+# ---- Ruff ----
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+    "C90", # mccabe complexity
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking (TYPE_CHECKING blocks)
+    "ASYNC", # flake8-async
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long
+]
+unfixable = [
+    "F401", # unused imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/database.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# ---- Mypy ----
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = [
+    "pydantic.mypy",
+    "sqlalchemy.ext.mypy.plugin",
+]
+
+[[tool.mypy.overrides]]
+module = "src.config"
+disable_error_code = ["prop-decorator"]
+
+# ---- Pytest ----
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
