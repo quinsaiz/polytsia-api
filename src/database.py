@@ -22,6 +22,14 @@ class Base(DeclarativeBase):
     pass
 
 
+def import_all_models() -> None:
+    """
+    Import all models so Alembic can detect them for autogenerate.
+    """
+
+    ...
+
+
 async def get_db() -> AsyncGenerator[AsyncSession]:
     async with AsyncSessionFactory() as session:
         try:

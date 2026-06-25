@@ -4,10 +4,16 @@ set -e
 
 log() { echo "[entrypoint] $*"; }
 
+prepare_app() {
+  log "Running Alembic migrations..."
+  uv run alembic upgrade head
+}
+
 uv run wait-for-it --service "${POSTGRES_HOST}:${POSTGRES_PORT}" -- echo "[entrypoint] PostgreSQL is up"
 uv run wait-for-it --service "${REDIS_HOST}:${REDIS_PORT}" -- echo "[entrypoint] Redis is up"
 
 if [ "$1" = "backend" ]; then
+  prepare_app
   log "Starting Uvicorn..."
 
   exec uv run uvicorn src.main:app \
