@@ -1,6 +1,8 @@
 import logging
 from collections.abc import AsyncGenerator
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -27,7 +29,7 @@ def import_all_models() -> None:
     Import all models so Alembic can detect them for autogenerate.
     """
 
-    ...
+    from src.auth import models as _
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
@@ -38,3 +40,6 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
             logger.error(f"Database session error: {e}", exc_info=True)
             await session.rollback()
             raise
+
+
+DbSessionDep = Annotated[AsyncSession, Depends(get_db)]
