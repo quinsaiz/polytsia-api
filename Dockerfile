@@ -11,7 +11,12 @@ RUN addgroup --gid 1000 unprivileged && \
 USER unprivileged:unprivileged
 
 COPY pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-dev
+RUN uv sync \
+    --no-install-project \
+    --no-group dev \
+    --frozen
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY . .
 
