@@ -13,7 +13,7 @@ USER unprivileged:unprivileged
 COPY pyproject.toml uv.lock* ./
 RUN uv sync \
     --no-install-project \
-    --no-group dev \
+#    --no-group dev \
     --frozen
 
 ENV PATH="/app/.venv/bin:$PATH"

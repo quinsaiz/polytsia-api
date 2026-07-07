@@ -45,6 +45,7 @@ def _create_token(user_id: uuid.UUID, token_type: str, expires_delta: timedelta)
         "exp": now + expires_delta,
         "iat": now,
         "type": token_type,
+        "jti": str(uuid.uuid4()),
     }
 
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")

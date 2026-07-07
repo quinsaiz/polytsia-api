@@ -36,6 +36,7 @@ async def register(data: UserRegisterSchema, db: DbSessionDep) -> UserResponseSc
 
 @router.post("/login", response_model=TokenSchema)
 async def login(
+    # OAuth2 standard uses "username" field — we treat it as email
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DbSessionDep,
 ) -> TokenSchema:
