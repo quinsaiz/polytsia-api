@@ -19,7 +19,7 @@ services:
     env_file:
       - .env
     ports:
-      - "15432:5432"
+      - "${POSTGRES_EXTERNAL_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -31,7 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "16379:6379"
+      - "${REDIS_EXTERNAL_PORT}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
