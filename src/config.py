@@ -36,7 +36,8 @@ class Settings(BaseSettings):
     redis_external_port: int = 16379
 
     # External APIs
-    tmdb_api_key: str = ""
+    tmdb_read_access_token: str = ""
+    tmdb_base_url: str = "https://api.themoviedb.org/3"
     rawg_api_key: str = ""
 
     def _build_db_url(self, db_name: str, host: str, port: int) -> str:
