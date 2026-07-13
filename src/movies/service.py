@@ -1,19 +1,33 @@
 import logging
+import uuid
 
 import httpx
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.movies.exceptions import (
+    MovieAlreadyTrackedException,
     MovieNotFoundException,
     TMDBServiceUnavailableException,
 )
-from src.movies.schemas import TMDBMovieSchema, TMDBSearchResultSchema
+from src.movies.models import UserMovie
+from src.movies.schemas import (
+    TMDBGenreListSchema,
+    TMDBMovieSchema,
+    TMDBSearchResultSchema,
+    TrackMovieSchema,
+    UpdateUserMovieSchema,
+    UserMovieResponseSchema,
+)
+from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
 
 SEARCH_CACHE_TTL = 3600
 MOVIE_DETAIL_CACHE_TTL = 86400
+GENRES_CACHE_TTL = 604800
 
 
 def _tmdb_headers() -> dict[str, str]:
@@ -82,3 +96,141 @@ async def get_movie_details(
     await cache_set(cache_key, data, MOVIE_DETAIL_CACHE_TTL)
 
     return result
+
+
+async def get_genres(http_client: httpx.AsyncClient) -> TMDBGenreListSchema:
+    cache_key = "tmdb:genres"
+
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        logger.debug("Cache hit for genres")
+        return TMDBGenreListSchema.model_validate(cached)
+
+    try:
+        response = await http_client.get(
+            f"{settings.tmdb_base_url}/genre/movie/list",
+            headers=_tmdb_headers(),
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.error("TMDB genres request failed: %s", e)
+        raise TMDBServiceUnavailableException() from e
+
+    data = response.json()
+    result = TMDBGenreListSchema.model_validate(data)
+
+    await cache_set(cache_key, data, GENRES_CACHE_TTL)
+
+    return result
+
+
+async def track_movie(
+    user_id: uuid.UUID,
+    data: TrackMovieSchema,
+    db: AsyncSession,
+) -> UserMovie:
+    stmt = select(UserMovie).where(
+        UserMovie.user_id == user_id,
+        UserMovie.tmdb_id == data.tmdb_id,
+    )
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none() is not None:
+        raise MovieAlreadyTrackedException()
+
+    user_movie = UserMovie(
+        user_id=user_id,
+        tmdb_id=data.tmdb_id,
+        status=data.status,
+    )
+    db.add(user_movie)
+    await db.commit()
+    await db.refresh(user_movie)
+
+    logger.info("User %s tracked movie tmdb_id=%s", user_id, data.tmdb_id)
+
+    return user_movie
+
+
+async def get_user_movies(
+    user_id: uuid.UUID,
+    pagination: PaginationParams,
+    db: AsyncSession,
+) -> PaginatedResponse[UserMovieResponseSchema]:
+    count_stmt = (
+        select(func.count()).select_from(UserMovie).where(UserMovie.user_id == user_id)
+    )
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    stmt = (
+        select(UserMovie)
+        .where(UserMovie.user_id == user_id)
+        .order_by(UserMovie.created_at.desc())
+        .offset(pagination.offset)
+        .limit(pagination.limit)
+    )
+    result = await db.execute(stmt)
+    items = [UserMovieResponseSchema.model_validate(m) for m in result.scalars().all()]
+
+    return PaginatedResponse.create(
+        items=items,
+        total=total,
+        page=pagination.page,
+        page_size=pagination.page_size,
+    )
+
+
+async def get_user_movie_or_404(
+    user_id: uuid.UUID,
+    user_movie_id: uuid.UUID,
+    db: AsyncSession,
+) -> UserMovie:
+    stmt = select(UserMovie).where(
+        UserMovie.id == user_movie_id,
+        UserMovie.user_id == user_id,
+    )
+    result = await db.execute(stmt)
+    user_movie = result.scalar_one_or_none()
+
+    if user_movie is None:
+        raise MovieNotFoundException()
+
+    return user_movie
+
+
+async def update_user_movie(
+    user_id: uuid.UUID,
+    user_movie_id: uuid.UUID,
+    data: UpdateUserMovieSchema,
+    db: AsyncSession,
+) -> UserMovie:
+    user_movie = await get_user_movie_or_404(user_id, user_movie_id, db)
+
+    if data.status is not None:
+        user_movie.status = data.status
+    if data.personal_rating is not None:
+        user_movie.personal_rating = data.personal_rating
+    if data.tier is not None:
+        user_movie.tier = data.tier
+    if data.notes is not None:
+        user_movie.notes = data.notes
+
+    db.add(user_movie)
+    await db.commit()
+    await db.refresh(user_movie)
+
+    logger.info("User %s updated tracked movie: %s", user_id, user_movie_id)
+
+    return user_movie
+
+
+async def delete_user_movie(
+    user_id: uuid.UUID,
+    user_movie_id: uuid.UUID,
+    db: AsyncSession,
+) -> None:
+    user_movie = await get_user_movie_or_404(user_id, user_movie_id, db)
+
+    await db.delete(user_movie)
+    await db.commit()
+
+    logger.info("User %s removed tracked movie: %s", user_id, user_movie_id)

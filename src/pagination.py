@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Query
+from fastapi import Depends, Query
 from pydantic import BaseModel
 
 
@@ -47,3 +47,6 @@ class PaginatedResponse[T](BaseModel):
             page_size=page_size,
             total_pages=total_pages,
         )
+
+
+PaginationDep = Annotated[PaginationParams, Depends(get_pagination_params)]

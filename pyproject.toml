@@ -34,6 +34,9 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 line-length = 88
+exclude = [
+    "alembic",
+]
 
 [tool.ruff.lint]
 select = [
@@ -64,6 +67,7 @@ known-first-party = ["src"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
+exclude = '^alembic/'
 plugins = [
     "pydantic.mypy",
     "sqlalchemy.ext.mypy.plugin",
