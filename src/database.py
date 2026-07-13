@@ -25,11 +25,9 @@ class Base(DeclarativeBase):
 
 
 def import_all_models() -> None:
-    """
-    Import all models so Alembic can detect them for autogenerate.
-    """
-
-    from src.auth import models as _
+    """Import all models so Alembic can detect them for autogenerate."""
+    from src.auth.models import RefreshToken, User
+    from src.movies.models import UserMovie
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
