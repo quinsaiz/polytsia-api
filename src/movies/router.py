@@ -27,7 +27,7 @@ from src.pagination import PaginatedResponse, PaginationDep
 router = APIRouter(prefix="/movies", tags=["movies"])
 
 
-@router.get("/movies", response_model=TMDBSearchResultSchema)
+@router.get("/search", response_model=TMDBSearchResultSchema)
 async def search(
     query: str,
     http_client: HttpClientDep,
