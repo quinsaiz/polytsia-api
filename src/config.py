@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     tmdb_read_access_token: str = ""
     tmdb_base_url: str = "https://api.themoviedb.org/3"
     rawg_api_key: str = ""
+    rawg_base_url: str = "https://api.rawg.io/api"
 
     def _build_db_url(self, db_name: str, host: str, port: int) -> str:
         return (
