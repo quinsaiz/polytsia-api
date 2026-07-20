@@ -13,7 +13,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
-from src.movies.constants import TierRank, WatchStatus
+from src.movies.constants import WatchStatus
 
 
 class UserMovie(Base):
@@ -29,7 +29,7 @@ class UserMovie(Base):
     tmdb_id: Mapped[int] = mapped_column(Integer, index=True)
     status: Mapped[str] = mapped_column(String(20), default=WatchStatus.PLANNED)
     personal_rating: Mapped[int | None] = mapped_column(Integer)
-    tier: Mapped[TierRank | None] = mapped_column(String(1))
+    tier: Mapped[str | None] = mapped_column(String(1))
     notes: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
