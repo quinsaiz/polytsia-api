@@ -14,6 +14,7 @@ from src.games.exceptions import (
 from src.games.models import UserGame
 from src.games.schemas import (
     RAWGGameSchema,
+    RAWGGenreListSchema,
     RAWGPlatformListSchema,
     RAWGSearchResultSchema,
     TrackGameSchema,
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 SEARCH_CACHE_TTL = 3600
 GAME_DETAIL_CACHE_TTL = 86400
+GENRES_CACHE_TTL = 604800
 PLATFORMS_CACHE_TTL = 604800
 
 
@@ -101,6 +103,33 @@ async def get_game_details(
     result = RAWGGameSchema.model_validate(data)
 
     await cache_set(cache_key, data, GAME_DETAIL_CACHE_TTL)
+
+    return result
+
+
+async def get_genres(http_client: httpx.AsyncClient) -> RAWGGenreListSchema:
+    cache_key = "rawg:genres"
+
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        logger.debug("Cache hit for genres")
+        return RAWGGenreListSchema.model_validate(cached)
+
+    try:
+        response = await http_client.get(
+            f"{settings.rawg_base_url}/genres",
+            headers=_rawg_headers(),
+            params={"key": settings.rawg_api_key},
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.error("RAWG genre list request failed: %s", e)
+        raise RAWGServiceUnavailableException() from e
+
+    data = response.json()
+    result = RAWGGenreListSchema.model_validate(data)
+
+    await cache_set(cache_key, data, GENRES_CACHE_TTL)
 
     return result
 

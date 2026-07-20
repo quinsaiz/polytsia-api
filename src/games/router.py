@@ -7,6 +7,7 @@ from src.database import DbSessionDep
 from src.dependencies import HttpClientDep
 from src.games.schemas import (
     RAWGGameSchema,
+    RAWGGenreListSchema,
     RAWGPlatformListSchema,
     RAWGSearchResultSchema,
     TrackGameSchema,
@@ -16,6 +17,7 @@ from src.games.schemas import (
 from src.games.service import (
     delete_user_game,
     get_game_details,
+    get_genres,
     get_platforms,
     get_user_games,
     search_games,
@@ -40,6 +42,11 @@ async def search(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/genres", response_model=RAWGGenreListSchema)
+async def list_genres(http_client: HttpClientDep) -> RAWGGenreListSchema:
+    return await get_genres(http_client=http_client)
 
 
 @router.get("/platforms", response_model=RAWGPlatformListSchema)
