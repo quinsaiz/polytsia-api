@@ -3,6 +3,8 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import Depends
+from fastapi.exceptions import HTTPException, RequestValidationError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -27,6 +29,7 @@ class Base(DeclarativeBase):
 def import_all_models() -> None:
     """Import all models so Alembic can detect them for autogenerate."""
     from src.auth.models import RefreshToken, User
+    from src.games.models import UserGame
     from src.movies.models import UserMovie
 
 
@@ -34,8 +37,15 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
     async with AsyncSessionFactory() as session:
         try:
             yield session
-        except Exception as e:
-            logger.error(f"Database session error: {e}", exc_info=True)
+        except SQLAlchemyError:
+            logger.error("Database session error", exc_info=True)
+            await session.rollback()
+            raise
+        except (HTTPException, RequestValidationError):
+            await session.rollback()
+            raise
+        except Exception:
+            logger.error("Unhandled exception during request", exc_info=True)
             await session.rollback()
             raise
 
