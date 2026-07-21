@@ -1,0 +1,224 @@
+# Polytsia API
+
+A REST API for tracking personal media consumption — movies and games with tier list rankings, external metadata
+from TMDB and RAWG, and Redis-backed caching.
+
+Built with FastAPI, SQLAlchemy 2, and Docker. Designed as a pet project but structured to production standards.
+
+---
+
+## Features
+
+- **Movie tracking** — search TMDB, add movies to a personal library, set watch status, rating, tier, and notes
+- **Game tracking** — search RAWG, add games to a personal library, set play status, rating, tier, and notes
+- **Tier lists** — create named tier lists (S/A/B/C/D/F) for movies or games, add items, reorder within tiers
+- **External metadata** — proxied search and detail endpoints for TMDB (movies) and RAWG (games) with automatic Redis
+  caching
+- **Authentication** — JWT access + refresh tokens with rotation, bcrypt password hashing, OAuth2-compatible login flow
+- **Pagination** — generic paginated responses with page/page_size/total_pages metadata
+- **Redis caching** — search results (1 h), detail pages (24 h), genre/platform catalogs (7 d)
+- **Database migrations** — Alembic with async PostgreSQL support and autogenerate
+- **API documentation** — interactive Swagger UI and ReDoc (debug mode only)
+
+---
+
+## Tech Stack
+
+| Layer            | Technology                       |
+|------------------|----------------------------------|
+| Framework        | FastAPI 0.138+                   |
+| ORM              | SQLAlchemy 2 (async) + asyncpg   |
+| Validation       | Pydantic v2 + pydantic-settings  |
+| Auth             | python-jose (JWT HS256) + bcrypt |
+| HTTP client      | httpx (async, connection-pooled) |
+| Caching          | Redis 7                          |
+| Database         | PostgreSQL 17                    |
+| Migrations       | Alembic (async)                  |
+| Server           | Uvicorn (ASGI)                   |
+| Containerization | Docker + Docker Compose          |
+| Package manager  | uv                               |
+| Linting          | Ruff + mypy (strict)             |
+| Testing          | pytest + pytest-asyncio + httpx  |
+
+---
+
+## Project Structure
+
+```text
+src/
+├── main.py              # FastAPI app, lifespan, CORS, router registration
+├── config.py            # Pydantic settings (env-based configuration)
+├── database.py          # SQLAlchemy engine, session factory, Base
+├── dependencies.py      # Shared FastAPI dependencies (HTTP client)
+├── pagination.py        # Generic PaginatedResponse[T] and pagination deps
+├── redis.py             # Redis connection pool, cache get/set/delete helpers
+├── auth/                # User model, JWT service, register/login/refresh/logout
+├── movies/              # TMDB proxy, UserMovie model, track/update/delete
+├── games/               # RAWG proxy, UserGame model, track/update/delete
+├── tierlists/           # TierList + TierListItem models, CRUD with ownership checks
+├── profile/             # (planned) user profile features
+└── recommendations/     # (planned) recommendation engine
+
+alembic/                 # Database migration scripts (async PostgreSQL)
+tests/                   # pytest-asyncio integration tests per module
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Docker and Docker Compose
+- A `.env` file (see below)
+
+### Environment Variables
+
+Create a `.env` file in the project root based on `.env.example`:
+
+```env
+# --- Application Settings ---
+APP_NAME=Polytsia
+DEBUG=True
+SECRET_KEY=your-super-secret-key-change-in-production
+
+# --- Postgres Settings ---
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_HOST=db
+POSTGRES_PORT=5432
+POSTGRES_DB=polytsia
+
+# --- Redis Settings ---
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# --- External Ports ---
+POSTGRES_EXTERNAL_PORT=15432
+REDIS_EXTERNAL_PORT=16379
+
+# --- JWT Authentication Settings ---
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=30
+
+# --- External APIs Settings ---
+TMDB_READ_ACCESS_TOKEN=your-tmdb-read-access-token
+RAWG_API_KEY=your-rawg-api-key
+```
+
+To obtain API keys:
+
+- **TMDB** — register at [themoviedb.org](https://www.themoviedb.org/) and generate a Read Access Token under API
+  settings
+- **RAWG** — register at [rawg.io](https://rawg.io/apidocs) and copy your API key
+
+### Run
+
+```bash
+docker compose up --build
+```
+
+Services started:
+
+| Service      | URL                             |
+|--------------|---------------------------------|
+| REST API     | <http://localhost:8000/api/v1/> |
+| Swagger UI   | <http://localhost:8000/docs>    |
+| ReDoc        | <http://localhost:8000/redoc>   |
+| Health check | <http://localhost:8000/health>  |
+| PostgreSQL   | localhost:15432                 |
+| Redis        | localhost:16379                 |
+
+Swagger and ReDoc are available only when `DEBUG=True`.
+
+---
+
+## API Overview
+
+### Authentication
+
+| Method | Endpoint                       | Description                          |
+|--------|--------------------------------|--------------------------------------|
+| POST   | `/api/v1/auth/register`        | Register a new account               |
+| POST   | `/api/v1/auth/login`           | Obtain access + refresh tokens       |
+| GET    | `/api/v1/auth/me`              | Get current user profile             |
+| PATCH  | `/api/v1/auth/me`              | Update email or username             |
+| POST   | `/api/v1/auth/refresh`         | Rotate refresh token, get new pair   |
+| POST   | `/api/v1/auth/logout`          | Revoke refresh token                 |
+| POST   | `/api/v1/auth/change-password` | Change password, revoke all sessions |
+
+### Movies
+
+| Method | Endpoint                         | Auth     | Description                          |
+|--------|----------------------------------|----------|--------------------------------------|
+| GET    | `/api/v1/movies/search`          | No       | Search TMDB by query (cached)        |
+| GET    | `/api/v1/movies/genres`          | No       | List TMDB movie genres (cached)      |
+| GET    | `/api/v1/movies/{tmdb_id}`       | No       | Get movie details from TMDB (cached) |
+| POST   | `/api/v1/movies/track`           | Required | Add movie to personal library        |
+| GET    | `/api/v1/movies/`                | Required | List tracked movies (paginated)      |
+| PATCH  | `/api/v1/movies/{user_movie_id}` | Required | Update status, rating, tier, notes   |
+| DELETE | `/api/v1/movies/{user_movie_id}` | Required | Remove movie from library            |
+
+### Games
+
+| Method | Endpoint                       | Auth     | Description                         |
+|--------|--------------------------------|----------|-------------------------------------|
+| GET    | `/api/v1/games/search`         | No       | Search RAWG by query (cached)       |
+| GET    | `/api/v1/games/genres`         | No       | List RAWG game genres (cached)      |
+| GET    | `/api/v1/games/platforms`      | No       | List RAWG platforms (cached)        |
+| GET    | `/api/v1/games/{rawg_id}`      | No       | Get game details from RAWG (cached) |
+| POST   | `/api/v1/games/track`          | Required | Add game to personal library        |
+| GET    | `/api/v1/games/`               | Required | List tracked games (paginated)      |
+| PATCH  | `/api/v1/games/{user_game_id}` | Required | Update status, rating, tier, notes  |
+| DELETE | `/api/v1/games/{user_game_id}` | Required | Remove game from library            |
+
+### Tier Lists
+
+| Method | Endpoint                                           | Description                      |
+|--------|----------------------------------------------------|----------------------------------|
+| POST   | `/api/v1/tierlists/`                               | Create a new tier list           |
+| GET    | `/api/v1/tierlists/`                               | List all tier lists              |
+| GET    | `/api/v1/tierlists/{tier_list_id}`                 | Get tier list with items         |
+| DELETE | `/api/v1/tierlists/{tier_list_id}`                 | Delete a tier list               |
+| POST   | `/api/v1/tierlists/{tier_list_id}/items`           | Add item to tier list            |
+| PATCH  | `/api/v1/tierlists/{tier_list_id}/items/{item_id}` | Move item (change tier/position) |
+| DELETE | `/api/v1/tierlists/{tier_list_id}/items/{item_id}` | Remove item from tier list       |
+
+All tier list endpoints require authentication. Items reference tracked movies or games by ID.
+
+---
+
+## Data Model
+
+```text
+users
+  ├── user_movies      (user_id + tmdb_id unique)
+  ├── user_games       (user_id + rawg_id unique)
+  ├── refresh_tokens   (hashed, rotated on use)
+  └── tier_lists
+        └── tier_list_items  (references user_movies XOR user_games)
+```
+
+Each tracked movie/game stores: status (`planned` / `watching|playing` / `completed` / `dropped`), personal rating, tier
+rank (S--F), and free-text notes.
+
+Tier list items enforce a check constraint ensuring exactly one media reference per item, and uniqueness constraints
+prevent duplicates within a list.
+
+---
+
+## Running Tests
+
+Tests use a separate `polytsia_test` database, per-test transaction rollback, and httpx `ASGITransport` for in-process
+API calls.
+
+```bash
+# Inside the container
+pytest
+
+# Or via Docker Compose
+docker compose run --rm backend pytest
+```
+
+Tests cover: authentication flow (register, login, token refresh, logout, password change, profile update), movie
+tracking CRUD, game tracking CRUD, and tier list operations.

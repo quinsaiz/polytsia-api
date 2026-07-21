@@ -21,6 +21,6 @@ if [ "$1" = "backend" ]; then
     --port 8000 \
     ${RELOAD:+--reload}
 else
-  log "No valid argument provided, defaulting to infinite sleep..."
-  exec sleep infinity
+  log "Custom command detected, executing: $*"
+  exec "$@"
 fi
