@@ -31,6 +31,7 @@ def import_all_models() -> None:
     from src.auth.models import RefreshToken, User
     from src.games.models import UserGame
     from src.movies.models import UserMovie
+    from src.tierlists.models import TierList, TierListItem
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:

@@ -167,7 +167,8 @@ async def track_game(
     db: AsyncSession,
 ) -> UserGame:
     stmt = select(UserGame).where(
-        UserGame.user_id == user_id, UserGame.rawg_id == data.rawg_id
+        UserGame.user_id == user_id,
+        UserGame.rawg_id == data.rawg_id,
     )
     result = await db.execute(stmt)
 
@@ -222,7 +223,8 @@ async def get_user_game_or_404(
     db: AsyncSession,
 ) -> UserGame:
     stmt = select(UserGame).where(
-        UserGame.id == user_game_id, UserGame.user_id == user_id
+        UserGame.id == user_game_id,
+        UserGame.user_id == user_id,
     )
     result = await db.execute(stmt)
     user_game = result.scalar_one_or_none()

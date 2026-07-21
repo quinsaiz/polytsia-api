@@ -12,6 +12,7 @@ from src.auth.router import router as auth_router
 from src.config import settings
 from src.games.router import router as games_router
 from src.movies.router import router as movies_router
+from src.tierlists.router import router as tierlists_router
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(movies_router, prefix="/api/v1")
 app.include_router(games_router, prefix="/api/v1")
+app.include_router(tierlists_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["System"])
