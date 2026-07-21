@@ -56,7 +56,7 @@ async def track(
     current_user: CurrentUserDep,
     db: DbSessionDep,
 ) -> UserMovieResponseSchema:
-    user_movie = await track_movie(user_id=current_user.id, data=data, db=db)
+    user_movie = await track_movie(data=data, user_id=current_user.id, db=db)
     return UserMovieResponseSchema.model_validate(user_movie)
 
 
@@ -66,7 +66,7 @@ async def list_my_movies(
     db: DbSessionDep,
     pagination: PaginationDep,
 ) -> PaginatedResponse[UserMovieResponseSchema]:
-    return await get_user_movies(user_id=current_user.id, pagination=pagination, db=db)
+    return await get_user_movies(user_id=current_user.id, db=db, pagination=pagination)
 
 
 @router.patch("/{user_movie_id}", response_model=UserMovieResponseSchema)
@@ -77,9 +77,9 @@ async def update(
     db: DbSessionDep,
 ) -> UserMovieResponseSchema:
     user_movie = await update_user_movie(
-        user_id=current_user.id,
         user_movie_id=user_movie_id,
         data=data,
+        user_id=current_user.id,
         db=db,
     )
     return UserMovieResponseSchema.model_validate(user_movie)
@@ -91,4 +91,4 @@ async def delete(
     current_user: CurrentUserDep,
     db: DbSessionDep,
 ) -> None:
-    await delete_user_movie(user_id=current_user.id, user_movie_id=user_movie_id, db=db)
+    await delete_user_movie(user_movie_id=user_movie_id, user_id=current_user.id, db=db)

@@ -13,12 +13,12 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database import Base
-from src.movies.constants import WatchStatus
+from src.games.constants import PlayStatus
 
 
-class UserMovie(Base):
-    __tablename__ = "user_movies"
-    __table_args__ = (UniqueConstraint("user_id", "tmdb_id", name="uq_user_movie"),)
+class UserGame(Base):
+    __tablename__ = "user_games"
+    __table_args__ = (UniqueConstraint("user_id", "rawg_id", name="uq_user_game"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -26,8 +26,8 @@ class UserMovie(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
     )
-    tmdb_id: Mapped[int] = mapped_column(Integer, index=True)
-    status: Mapped[str] = mapped_column(String(20), default=WatchStatus.PLANNED)
+    rawg_id: Mapped[int] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(20), default=PlayStatus.PLANNED)
     personal_rating: Mapped[int | None] = mapped_column(Integer)
     tier: Mapped[str | None] = mapped_column(String(1))
     notes: Mapped[str | None] = mapped_column(String(1000))
@@ -42,4 +42,4 @@ class UserMovie(Base):
     )
 
     def __repr__(self) -> str:
-        return f"UserMovie user_id={self.user_id}, tmdb_id={self.tmdb_id}"
+        return f"UserGame user_id={self.user_id}, rawg_id={self.rawg_id}"

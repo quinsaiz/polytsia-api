@@ -224,22 +224,24 @@ async def update_user_profile(
     data: UpdateProfileSchema,
     db: AsyncSession,
 ) -> UserResponseSchema:
-    if data.email is not None and data.email != user.email:
-        stmt = select(User).where(User.email == data.email)
+    update_data = data.model_dump(exclude_unset=True)
+
+    if "email" in update_data and update_data["email"] != user.email:
+        stmt = select(User).where(User.email == update_data["email"])
         result = await db.execute(stmt)
         if result.scalar_one_or_none() is not None:
             raise EmailAlreadyExistsException()
 
-        user.email = data.email
+        user.email = update_data["email"]
         user.is_verified = False
 
-    if data.username is not None and data.username != user.username:
-        stmt = select(User).where(User.username == data.username)
+    if "username" in update_data and update_data["username"] != user.username:
+        stmt = select(User).where(User.username == update_data["username"])
         result = await db.execute(stmt)
         if result.scalar_one_or_none() is not None:
             raise UsernameAlreadyExistsException()
 
-        user.username = data.username
+        user.username = update_data["username"]
 
     db.add(user)
     await db.commit()
