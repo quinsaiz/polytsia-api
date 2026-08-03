@@ -6,6 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.games.constants import (
+    GAME_DETAIL_CACHE_TTL,
+    GENRES_CACHE_TTL,
+    PLATFORMS_CACHE_TTL,
+    SEARCH_CACHE_TTL,
+)
 from src.games.exceptions import (
     GameAlreadyTrackedException,
     GameNotFoundException,
@@ -25,11 +31,6 @@ from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
-
-SEARCH_CACHE_TTL = 3600
-GAME_DETAIL_CACHE_TTL = 86400
-GENRES_CACHE_TTL = 604800
-PLATFORMS_CACHE_TTL = 604800
 
 
 def _rawg_headers() -> dict[str, str]:
@@ -164,6 +165,7 @@ async def get_platforms(http_client: httpx.AsyncClient) -> RAWGPlatformListSchem
 async def track_game(
     user_id: uuid.UUID,
     data: TrackGameSchema,
+    http_client: httpx.AsyncClient,
     db: AsyncSession,
 ) -> UserGame:
     stmt = select(UserGame).where(
@@ -175,10 +177,13 @@ async def track_game(
     if result.scalar_one_or_none() is not None:
         raise GameAlreadyTrackedException()
 
+    game_details = await get_game_details(rawg_id=data.rawg_id, http_client=http_client)
+
     user_game = UserGame(
         user_id=user_id,
         rawg_id=data.rawg_id,
         status=data.status,
+        external_rating=game_details.rating,
     )
     db.add(user_game)
     await db.commit()

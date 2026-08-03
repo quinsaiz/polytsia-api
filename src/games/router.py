@@ -67,9 +67,15 @@ async def get_details(rawg_id: int, http_client: HttpClientDep) -> RAWGGameSchem
 async def track(
     data: TrackGameSchema,
     current_user: CurrentUserDep,
+    http_client: HttpClientDep,
     db: DbSessionDep,
 ) -> UserGameResponseSchema:
-    user_game = await track_game(data=data, user_id=current_user.id, db=db)
+    user_game = await track_game(
+        data=data,
+        user_id=current_user.id,
+        http_client=http_client,
+        db=db,
+    )
     return UserGameResponseSchema.model_validate(user_game)
 
 

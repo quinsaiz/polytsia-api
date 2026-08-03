@@ -69,6 +69,7 @@ class UserGameResponseSchema(BaseModel):
     status: PlayStatus
     personal_rating: int | None
     tier: TierRank | None
+    external_rating: float | None
     notes: str | None
     created_at: datetime
     updated_at: datetime

@@ -49,10 +49,10 @@ class TestGenres:
 class TestTracking:
     async def test_track_movie_success(
         self,
-        client: AsyncClient,
+        client_with_mock_tmdb: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        response = await client.post(
+        response = await client_with_mock_tmdb.post(
             "/api/v1/movies/track",
             json={"tmdb_id": 155, "status": "planned"},
             headers=auth_headers,
@@ -64,15 +64,15 @@ class TestTracking:
 
     async def test_track_movie_duplicate(
         self,
-        client: AsyncClient,
+        client_with_mock_tmdb: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        await client.post(
+        await client_with_mock_tmdb.post(
             "/api/v1/movies/track",
             json={"tmdb_id": 155, "status": "planned"},
             headers=auth_headers,
         )
-        response = await client.post(
+        response = await client_with_mock_tmdb.post(
             "/api/v1/movies/track",
             json={"tmdb_id": 155, "status": "planned"},
             headers=auth_headers,
@@ -88,15 +88,17 @@ class TestTracking:
 
     async def test_list_my_movies(
         self,
-        client: AsyncClient,
+        client_with_mock_tmdb: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        await client.post(
+        await client_with_mock_tmdb.post(
             "/api/v1/movies/track",
             json={"tmdb_id": 155, "status": "planned"},
             headers=auth_headers,
         )
-        response = await client.get("/api/v1/movies/", headers=auth_headers)
+        response = await client_with_mock_tmdb.get(
+            "/api/v1/movies/", headers=auth_headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 1
@@ -104,17 +106,17 @@ class TestTracking:
 
     async def test_update_user_movie(
         self,
-        client: AsyncClient,
+        client_with_mock_tmdb: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        track_response = await client.post(
+        track_response = await client_with_mock_tmdb.post(
             "/api/v1/movies/track",
             json={"tmdb_id": 155, "status": "planned"},
             headers=auth_headers,
         )
         user_movie_id = track_response.json()["id"]
 
-        response = await client.patch(
+        response = await client_with_mock_tmdb.patch(
             f"/api/v1/movies/{user_movie_id}",
             json={"status": "watching", "personal_rating": 9, "tier": "S"},
             headers=auth_headers,
@@ -127,17 +129,17 @@ class TestTracking:
 
     async def test_delete_user_movie(
         self,
-        client: AsyncClient,
+        client_with_mock_tmdb: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        track_response = await client.post(
+        track_response = await client_with_mock_tmdb.post(
             "/api/v1/movies/track",
             json={"tmdb_id": 155, "status": "planned"},
             headers=auth_headers,
         )
         user_movie_id = track_response.json()["id"]
 
-        response = await client.delete(
+        response = await client_with_mock_tmdb.delete(
             f"/api/v1/movies/{user_movie_id}",
             headers=auth_headers,
         )
