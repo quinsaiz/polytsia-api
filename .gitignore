@@ -14,6 +14,9 @@ wheels/
 .ruff_cache/
 .pytest_cache/
 
+# Celery files
+celerybeat*
+
 # IDEs and editors config
 .idea/
 .vscode/
