@@ -1,10 +1,12 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from src.auth.dependencies import CurrentUserDep
 from src.database import DbSessionDep
 from src.dependencies import HttpClientDep
+from src.games.constants import SEARCH_MAX_PAGE
 from src.games.schemas import (
     RAWGGameSchema,
     RAWGGenreListSchema,
@@ -33,8 +35,8 @@ router = APIRouter(prefix="/games", tags=["games"])
 async def search(
     query: str,
     http_client: HttpClientDep,
-    page: int = 1,
-    page_size: int = 10,
+    page: Annotated[int, Query(ge=1, le=SEARCH_MAX_PAGE)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=40)] = 10,
 ) -> RAWGSearchResultSchema:
     return await search_games(
         query=query,

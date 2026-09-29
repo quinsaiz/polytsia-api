@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class TokenSchema(BaseModel):
@@ -61,3 +61,10 @@ class ChangePasswordSchema(BaseModel):
 class UpdateProfileSchema(BaseModel):
     email: EmailStr | None = None
     username: str | None = Field(default=None, min_length=3, max_length=50)
+
+    @field_validator("email", "username")
+    @classmethod
+    def reject_null(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("Explicit null is not allowed")
+        return value

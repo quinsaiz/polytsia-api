@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from src.auth.dependencies import CurrentUserDep
 from src.database import DbSessionDep
@@ -31,7 +32,7 @@ router = APIRouter(prefix="/movies", tags=["movies"])
 async def search(
     query: str,
     http_client: HttpClientDep,
-    page: int = 1,
+    page: Annotated[int, Query(ge=1, le=500)] = 1,
 ) -> TMDBSearchResultSchema:
     return await search_movies(query=query, http_client=http_client, page=page)
 

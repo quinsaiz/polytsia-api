@@ -152,6 +152,8 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | POST   | `/api/v1/auth/logout`          | Revoke refresh token                 |
 | POST   | `/api/v1/auth/change-password` | Change password, revoke all sessions |
 
+For `PATCH /api/v1/auth/me`, omitted fields keep their current values. Explicit `null` for `email` or `username` returns 422.
+
 ### Movies
 
 | Method | Endpoint                         | Auth     | Description                          |
@@ -163,6 +165,8 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | GET    | `/api/v1/movies/`                | Required | List tracked movies (paginated)      |
 | PATCH  | `/api/v1/movies/{user_movie_id}` | Required | Update status, rating, tier, notes   |
 | DELETE | `/api/v1/movies/{user_movie_id}` | Required | Remove movie from library            |
+
+Movie search accepts `query` and `page` (default 1, range 1–500).
 
 ### Games
 
@@ -177,11 +181,15 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | PATCH  | `/api/v1/games/{user_game_id}` | Required | Update status, rating, tier, notes  |
 | DELETE | `/api/v1/games/{user_game_id}` | Required | Remove game from library            |
 
-Game search accepts `query`, `page` (default 1), and `page_size` (default 10).
+Game search accepts `query`, `page` (default 1, range 1–100), and `page_size` (default 10, range 1–40).
+These ranges are local Polytsia API limits, not confirmed RAWG limits. At `page=100`, `next` is `null` even if RAWG reports another page.
 Platforms accepts `page` (default 1). In both responses, `next` and `previous`
 are now relative URLs to these API routes, or `null` when RAWG reports no such
 page. Previously they were RAWG URLs, which could include the server's API key.
 Follow the returned URL on this API to keep the search query and page size.
+
+For tracked movie and game PATCH requests, omitted fields keep their current values. Explicit `null` clears
+`personal_rating`, `tier`, or `notes`; `status: null` returns 422. Notes may contain at most 1,000 characters.
 
 ### Tier Lists
 
@@ -196,6 +204,7 @@ Follow the returned URL on this API to keep the search query and page size.
 | DELETE | `/api/v1/tierlists/{tier_list_id}/items/{item_id}` | Remove item from tier list       |
 
 All tier list endpoints require authentication. Items reference tracked movies or games by ID.
+Tier list names may contain at most 100 characters.
 
 ### Recommendations
 

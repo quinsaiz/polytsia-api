@@ -218,13 +218,13 @@ async def update_user_movie(
 ) -> UserMovie:
     user_movie = await get_user_movie_or_404(user_id, user_movie_id, db)
 
-    if data.status is not None:
+    if "status" in data.model_fields_set:
         user_movie.status = data.status
-    if data.personal_rating is not None:
+    if "personal_rating" in data.model_fields_set:
         user_movie.personal_rating = data.personal_rating
-    if data.tier is not None:
+    if "tier" in data.model_fields_set:
         user_movie.tier = data.tier
-    if data.notes is not None:
+    if "notes" in data.model_fields_set:
         user_movie.notes = data.notes
 
     db.add(user_movie)
