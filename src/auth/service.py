@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 from jose import JWTError, jwt
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.constants import ACCESS_TOKEN_TYPE, REFRESH_TOKEN_TYPE
@@ -26,6 +27,7 @@ from src.auth.schemas import (
     UserResponseSchema,
 )
 from src.config import settings
+from src.database import is_unique_constraint_violation
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +85,17 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def save_refresh_token(user_id: uuid.UUID, token: str, db: AsyncSession) -> None:
-    refresh_token = RefreshToken(
+def _refresh_token_record(user_id: uuid.UUID, token: str) -> RefreshToken:
+    return RefreshToken(
         user_id=user_id,
         token_hash=_hash_token(token),
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.refresh_token_expire_days),
     )
-    db.add(refresh_token)
+
+
+async def save_refresh_token(user_id: uuid.UUID, token: str, db: AsyncSession) -> None:
+    db.add(_refresh_token_record(user_id, token))
     await db.commit()
 
 
@@ -116,12 +121,22 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> TokenSch
         await db.commit()
         raise InvalidCredentialsException()
 
-    await db.delete(db_token)
-    await db.commit()
+    try:
+        consumed = await db.execute(
+            delete(RefreshToken)
+            .where(RefreshToken.id == db_token.id)
+            .returning(RefreshToken.id)
+        )
+        if consumed.scalar_one_or_none() is None:
+            raise InvalidCredentialsException()
 
-    new_access = create_access_token(payload.sub)
-    new_refresh = create_refresh_token(payload.sub)
-    await save_refresh_token(payload.sub, new_refresh, db)
+        new_access = create_access_token(payload.sub)
+        new_refresh = create_refresh_token(payload.sub)
+        db.add(_refresh_token_record(payload.sub, new_refresh))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
     logger.info("Refresh token rotated for user: %s", payload.sub)
 
@@ -171,7 +186,15 @@ async def register_user(
     )
 
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        if is_unique_constraint_violation(error, "ix_users_email"):
+            raise EmailAlreadyExistsException() from error
+        if is_unique_constraint_violation(error, "ix_users_username"):
+            raise UsernameAlreadyExistsException() from error
+        raise
     await db.refresh(user)
 
     logger.info("New user registered: %s", user.email)
@@ -226,25 +249,33 @@ async def update_user_profile(
 ) -> UserResponseSchema:
     update_data = data.model_dump(exclude_unset=True)
 
-    if "email" in update_data and update_data["email"] != user.email:
-        stmt = select(User).where(User.email == update_data["email"])
-        result = await db.execute(stmt)
-        if result.scalar_one_or_none() is not None:
-            raise EmailAlreadyExistsException()
+    try:
+        if "email" in update_data and update_data["email"] != user.email:
+            stmt = select(User).where(User.email == update_data["email"])
+            result = await db.execute(stmt)
+            if result.scalar_one_or_none() is not None:
+                raise EmailAlreadyExistsException()
 
-        user.email = update_data["email"]
-        user.is_verified = False
+            user.email = update_data["email"]
+            user.is_verified = False
 
-    if "username" in update_data and update_data["username"] != user.username:
-        stmt = select(User).where(User.username == update_data["username"])
-        result = await db.execute(stmt)
-        if result.scalar_one_or_none() is not None:
-            raise UsernameAlreadyExistsException()
+        if "username" in update_data and update_data["username"] != user.username:
+            stmt = select(User).where(User.username == update_data["username"])
+            result = await db.execute(stmt)
+            if result.scalar_one_or_none() is not None:
+                raise UsernameAlreadyExistsException()
 
-        user.username = update_data["username"]
+            user.username = update_data["username"]
 
-    db.add(user)
-    await db.commit()
+        db.add(user)
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        if is_unique_constraint_violation(error, "ix_users_email"):
+            raise EmailAlreadyExistsException() from error
+        if is_unique_constraint_violation(error, "ix_users_username"):
+            raise UsernameAlreadyExistsException() from error
+        raise
     await db.refresh(user)
 
     logger.info("Profile updated for user: %s", user.id)

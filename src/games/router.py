@@ -50,8 +50,10 @@ async def list_genres(http_client: HttpClientDep) -> RAWGGenreListSchema:
 
 
 @router.get("/platforms", response_model=RAWGPlatformListSchema)
-async def list_platforms(http_client: HttpClientDep) -> RAWGPlatformListSchema:
-    return await get_platforms(http_client=http_client)
+async def list_platforms(
+    http_client: HttpClientDep, page: int = 1
+) -> RAWGPlatformListSchema:
+    return await get_platforms(http_client=http_client, page=page)
 
 
 @router.get("/{rawg_id}", response_model=RAWGGameSchema)

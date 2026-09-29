@@ -1,11 +1,14 @@
 import logging
 import uuid
+from urllib.parse import urlencode
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.database import is_unique_constraint_violation
 from src.games.constants import (
     GAME_DETAIL_CACHE_TTL,
     GENRES_CACHE_TTL,
@@ -45,18 +48,64 @@ def _rawg_headers() -> dict[str, str]:
     return {"User-Agent": settings.app_name}
 
 
+def _local_page_link(path: str, page: int, params: dict[str, str | int]) -> str:
+    return f"{path}?{urlencode({**params, 'page': page})}"
+
+
+def _safe_search_result(
+    data: object, query: str, page: int, page_size: int
+) -> RAWGSearchResultSchema:
+    result = RAWGSearchResultSchema.model_validate(data)
+    path = "/api/v1/games/search"
+    params: dict[str, str | int] = {"query": query, "page_size": page_size}
+    return result.model_copy(
+        update={
+            "next": (
+                _local_page_link(path, page + 1, params)
+                if result.next is not None
+                else None
+            ),
+            "previous": (
+                _local_page_link(path, page - 1, params)
+                if result.previous is not None and page > 1
+                else None
+            ),
+        }
+    )
+
+
+def _safe_platform_list(data: object, page: int) -> RAWGPlatformListSchema:
+    result = RAWGPlatformListSchema.model_validate(data)
+    path = "/api/v1/games/platforms"
+    params: dict[str, str | int] = {}
+    return result.model_copy(
+        update={
+            "next": (
+                _local_page_link(path, page + 1, params)
+                if result.next is not None
+                else None
+            ),
+            "previous": (
+                _local_page_link(path, page - 1, params)
+                if result.previous is not None and page > 1
+                else None
+            ),
+        }
+    )
+
+
 async def search_games(
     query: str,
     page: int,
     page_size: int,
     http_client: httpx.AsyncClient,
 ) -> RAWGSearchResultSchema:
-    cache_key = f"rawg:search:{query.lower()}:{page}"
+    cache_key = f"rawg:search:v2:{urlencode({'query': query, 'page': page, 'page_size': page_size})}"
 
     cached = await cache_get(cache_key)
     if cached is not None:
         logger.debug("Cache hit for search: %s", cache_key)
-        return RAWGSearchResultSchema.model_validate(cached)
+        return _safe_search_result(cached, query, page, page_size)
 
     try:
         response = await http_client.get(
@@ -75,9 +124,9 @@ async def search_games(
         raise RAWGServiceUnavailableException() from None
 
     data = response.json()
-    result = RAWGSearchResultSchema.model_validate(data)
+    result = _safe_search_result(data, query, page, page_size)
 
-    await cache_set(cache_key, data, SEARCH_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), SEARCH_CACHE_TTL)
 
     return result
 
@@ -141,19 +190,21 @@ async def get_genres(http_client: httpx.AsyncClient) -> RAWGGenreListSchema:
     return result
 
 
-async def get_platforms(http_client: httpx.AsyncClient) -> RAWGPlatformListSchema:
-    cache_key = "rawg:platforms"
+async def get_platforms(
+    http_client: httpx.AsyncClient, page: int = 1
+) -> RAWGPlatformListSchema:
+    cache_key = f"rawg:platforms:v2:{page}"
 
     cached = await cache_get(cache_key)
     if cached is not None:
         logger.debug("Cache hit for platforms")
-        return RAWGPlatformListSchema.model_validate(cached)
+        return _safe_platform_list(cached, page)
 
     try:
         response = await http_client.get(
             f"{settings.rawg_base_url}/platforms",
             headers=_rawg_headers(),
-            params={"key": settings.rawg_api_key},
+            params={"key": settings.rawg_api_key, "page": page},
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
@@ -161,9 +212,9 @@ async def get_platforms(http_client: httpx.AsyncClient) -> RAWGPlatformListSchem
         raise RAWGServiceUnavailableException() from None
 
     data = response.json()
-    result = RAWGPlatformListSchema.model_validate(data)
+    result = _safe_platform_list(data, page)
 
-    await cache_set(cache_key, data, PLATFORMS_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), PLATFORMS_CACHE_TTL)
 
     return result
 
@@ -192,7 +243,13 @@ async def track_game(
         external_rating=game_details.rating,
     )
     db.add(user_game)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        if is_unique_constraint_violation(error, "uq_user_game"):
+            raise GameAlreadyTrackedException() from error
+        raise
     await db.refresh(user_game)
 
     logger.info("User %s tracked game rawg_id=%s", user_id, data.rawg_id)
