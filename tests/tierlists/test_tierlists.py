@@ -1,3 +1,4 @@
+import pytest
 from httpx import AsyncClient
 
 from src.games.models import UserGame
@@ -20,6 +21,21 @@ class TestCreateTierList:
         assert data["name"] == "Best RPGs 2024"
         assert data["media_type"] == "game"
         assert data["items"] == []
+
+    @pytest.mark.parametrize("length, expected", [(100, 201), (101, 422)])
+    async def test_name_length(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        length: int,
+        expected: int,
+    ) -> None:
+        response = await client.post(
+            "/api/v1/tierlists/",
+            json={"name": "x" * length, "media_type": "game"},
+            headers=auth_headers,
+        )
+        assert response.status_code == expected
 
     async def test_create_tier_list_unauthorized(self, client: AsyncClient) -> None:
         response = await client.post(

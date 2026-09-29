@@ -11,7 +11,7 @@ Built with FastAPI, SQLAlchemy 2, and Docker. Designed as a pet project but stru
 
 - **Movie tracking** — search TMDB, add movies to a personal library, set watch status, rating, tier, and notes
 - **Game tracking** — search RAWG, add games to a personal library, set play status, rating, tier, and notes
-- **Tier lists** — create named tier lists (S/A/B/C/D/F) for movies or games, add items, reorder within tiers
+- **Tier lists** — create named tier lists (S/A/B/C/D/F) for movies or games, add items, assign their tier and position
 - **External metadata** — proxied search and detail endpoints for TMDB (movies) and RAWG (games) with automatic Redis
   caching
 - **Authentication** — JWT access + refresh tokens with rotation, bcrypt password hashing, OAuth2-compatible login flow
@@ -150,7 +150,11 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | PATCH  | `/api/v1/auth/me`              | Update email or username             |
 | POST   | `/api/v1/auth/refresh`         | Rotate refresh token, get new pair   |
 | POST   | `/api/v1/auth/logout`          | Revoke refresh token                 |
-| POST   | `/api/v1/auth/change-password` | Change password, revoke all sessions |
+| POST   | `/api/v1/auth/change-password` | Change password, revoke refresh tokens |
+
+Changing a password deletes stored refresh tokens; already issued access tokens remain valid until they expire.
+
+For `PATCH /api/v1/auth/me`, omitted fields keep their current values. Explicit `null` for `email` or `username` returns 422.
 
 ### Movies
 
@@ -163,6 +167,8 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | GET    | `/api/v1/movies/`                | Required | List tracked movies (paginated)      |
 | PATCH  | `/api/v1/movies/{user_movie_id}` | Required | Update status, rating, tier, notes   |
 | DELETE | `/api/v1/movies/{user_movie_id}` | Required | Remove movie from library            |
+
+Movie search accepts `query` and `page` (default 1, range 1–500).
 
 ### Games
 
@@ -177,11 +183,15 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | PATCH  | `/api/v1/games/{user_game_id}` | Required | Update status, rating, tier, notes  |
 | DELETE | `/api/v1/games/{user_game_id}` | Required | Remove game from library            |
 
-Game search accepts `query`, `page` (default 1), and `page_size` (default 10).
+Game search accepts `query`, `page` (default 1, range 1–100), and `page_size` (default 10, range 1–40).
+These ranges are local Polytsia API limits, not confirmed RAWG limits. At `page=100`, `next` is `null` even if RAWG reports another page.
 Platforms accepts `page` (default 1). In both responses, `next` and `previous`
 are now relative URLs to these API routes, or `null` when RAWG reports no such
 page. Previously they were RAWG URLs, which could include the server's API key.
 Follow the returned URL on this API to keep the search query and page size.
+
+For tracked movie and game PATCH requests, omitted fields keep their current values. Explicit `null` clears
+`personal_rating`, `tier`, or `notes`; `status: null` returns 422. Notes may contain at most 1,000 characters.
 
 ### Tier Lists
 
@@ -196,6 +206,8 @@ Follow the returned URL on this API to keep the search query and page size.
 | DELETE | `/api/v1/tierlists/{tier_list_id}/items/{item_id}` | Remove item from tier list       |
 
 All tier list endpoints require authentication. Items reference tracked movies or games by ID.
+Tier list names may contain at most 100 characters.
+Setting an item's position does not shift other items automatically.
 
 ### Recommendations
 
@@ -259,16 +271,12 @@ prevent duplicates within a list.
 
 ## Running Tests
 
-Tests use a `polytsia_test` database name, per-test transaction rollback, and httpx `ASGITransport` for in-process
-API calls. The name alone does not isolate the PostgreSQL instance. Run tests only with a separate test PostgreSQL
-instance and Redis instance: older movie/game fixtures call Redis `FLUSHDB`. Recommendation tests replace the cache
-with an in-memory mapping except for the Redis pipeline tests, which require dedicated test services on
-`localhost:25432` (PostgreSQL) and `localhost:26379` (Redis), plus `POLYTSIA_TEST_ISOLATED_SERVICES=1`.
-
 ```bash
-# After starting isolated test services and setting test-only environment variables
-pytest tests/recommendations
+./scripts/test.sh
 ```
 
-The suite also contains authentication, movie/game tracking, and tier list tests; their Redis fixtures require the
-same isolation before running the full suite.
+This runs the full pytest suite in a separate Docker Compose project. PostgreSQL and Redis use temporary in-memory
+storage, have no published ports or shared volumes, and are removed when the command finishes, including on failure.
+The test container alone receives the test connection settings. Development data is untouched even though movie/game
+fixtures call Redis `FLUSHDB`. The command reports the full pytest result, exits 0 on success, and returns a nonzero
+status after cleanup on failure.

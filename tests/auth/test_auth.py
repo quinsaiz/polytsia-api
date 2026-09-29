@@ -1,3 +1,4 @@
+import pytest
 from httpx import AsyncClient
 
 from src.auth.models import User
@@ -97,6 +98,33 @@ class TestMe:
     async def test_get_me_unauthorized(self, client: AsyncClient) -> None:
         response = await client.get("/api/v1/auth/me")
         assert response.status_code == 401
+
+    async def test_patch_omitted_fields_keep_values(
+        self, client: AsyncClient, auth_headers: dict[str, str], test_user: User
+    ) -> None:
+        response = await client.patch("/api/v1/auth/me", json={}, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["email"] == test_user.email
+        assert response.json()["username"] == test_user.username
+
+    async def test_patch_one_field_keeps_other(
+        self, client: AsyncClient, auth_headers: dict[str, str], test_user: User
+    ) -> None:
+        response = await client.patch(
+            "/api/v1/auth/me", json={"username": "renameduser"}, headers=auth_headers
+        )
+        assert response.status_code == 200
+        assert response.json()["email"] == test_user.email
+        assert response.json()["username"] == "renameduser"
+
+    @pytest.mark.parametrize("field", ["email", "username"])
+    async def test_patch_null_required_field_is_422(
+        self, client: AsyncClient, auth_headers: dict[str, str], field: str
+    ) -> None:
+        response = await client.patch(
+            "/api/v1/auth/me", json={field: None}, headers=auth_headers
+        )
+        assert response.status_code == 422
 
 
 class TestChangePassword:

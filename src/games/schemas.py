@@ -55,10 +55,10 @@ class TrackGameSchema(BaseModel):
 
 
 class UpdateUserGameSchema(BaseModel):
-    status: PlayStatus | None = None
+    status: PlayStatus = PlayStatus.PLANNED
     personal_rating: int | None = Field(default=None, ge=0, le=10)
     tier: TierRank | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=1000)
 
 
 class UserGameResponseSchema(BaseModel):

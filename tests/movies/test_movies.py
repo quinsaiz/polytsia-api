@@ -1,3 +1,4 @@
+import pytest
 from httpx import AsyncClient
 
 
@@ -14,6 +15,24 @@ class TestSearch:
         data = response.json()
         assert data["results"][0]["title"] == "The Dark Knight"
         assert data["results"][0]["genre_ids"] == [28, 80]
+
+    @pytest.mark.parametrize("page", [1, 500])
+    async def test_search_page_boundaries(
+        self, client_with_mock_tmdb: AsyncClient, page: int
+    ) -> None:
+        response = await client_with_mock_tmdb.get(
+            "/api/v1/movies/search", params={"query": "Dark Knight", "page": page}
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("page", [0, 501])
+    async def test_search_page_outside_bounds(
+        self, client_with_mock_tmdb: AsyncClient, page: int
+    ) -> None:
+        response = await client_with_mock_tmdb.get(
+            "/api/v1/movies/search", params={"query": "Dark Knight", "page": page}
+        )
+        assert response.status_code == 422
 
 
 class TestGetDetails:
@@ -126,6 +145,64 @@ class TestTracking:
         assert data["status"] == "watching"
         assert data["personal_rating"] == 9
         assert data["tier"] == "S"
+
+    async def test_patch_omitted_then_null_optional_fields(
+        self, client_with_mock_tmdb: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        tracked = await client_with_mock_tmdb.post(
+            "/api/v1/movies/track", json={"tmdb_id": 155}, headers=auth_headers
+        )
+        url = f"/api/v1/movies/{tracked.json()['id']}"
+        values = {"personal_rating": 8, "tier": "A", "notes": "Good"}
+        filled = await client_with_mock_tmdb.patch(
+            url, json=values, headers=auth_headers
+        )
+        assert filled.status_code == 200
+
+        omitted = await client_with_mock_tmdb.patch(
+            url, json={"status": "watching"}, headers=auth_headers
+        )
+        assert omitted.status_code == 200
+        assert omitted.json()["status"] == "watching"
+        assert {key: omitted.json()[key] for key in values} == values
+
+        cleared = await client_with_mock_tmdb.patch(
+            url, json={key: None for key in values}, headers=auth_headers
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["status"] == "watching"
+        assert all(cleared.json()[key] is None for key in values)
+
+    async def test_patch_null_status_is_422(
+        self, client_with_mock_tmdb: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        tracked = await client_with_mock_tmdb.post(
+            "/api/v1/movies/track", json={"tmdb_id": 155}, headers=auth_headers
+        )
+        response = await client_with_mock_tmdb.patch(
+            f"/api/v1/movies/{tracked.json()['id']}",
+            json={"status": None},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("length, expected", [(1000, 200), (1001, 422)])
+    async def test_notes_length(
+        self,
+        client_with_mock_tmdb: AsyncClient,
+        auth_headers: dict[str, str],
+        length: int,
+        expected: int,
+    ) -> None:
+        tracked = await client_with_mock_tmdb.post(
+            "/api/v1/movies/track", json={"tmdb_id": 155}, headers=auth_headers
+        )
+        response = await client_with_mock_tmdb.patch(
+            f"/api/v1/movies/{tracked.json()['id']}",
+            json={"notes": "x" * length},
+            headers=auth_headers,
+        )
+        assert response.status_code == expected
 
     async def test_delete_user_movie(
         self,

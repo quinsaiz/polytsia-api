@@ -33,23 +33,28 @@ def isolated_recommendation_cache(
     candidate_pool: dict[str, list[dict[str, object]]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert os.environ.get("POLYTSIA_TEST_ISOLATED_SERVICES") == "1"
+    if os.environ.get("POLYTSIA_TEST_ISOLATED_SERVICES") != "1":
+        pytest.fail(
+            "Run pipeline tests with ./scripts/test.sh so PostgreSQL and Redis "
+            "are isolated from development data.",
+            pytrace=False,
+        )
     db_url = urlsplit(settings.test_database_url)
     redis_url = urlsplit(settings.redis_url)
     broker_url = urlsplit(settings.celery_broker_url)
     assert (db_url.hostname, db_url.port, db_url.path) == (
-        "localhost",
-        25432,
+        "test-db",
+        5432,
         "/polytsia_test",
     )
     assert (redis_url.hostname, redis_url.port, redis_url.path) == (
-        "localhost",
-        26379,
+        "test-redis",
+        6379,
         "/0",
     )
     assert (broker_url.hostname, broker_url.port, broker_url.path) == (
-        "localhost",
-        26379,
+        "test-redis",
+        6379,
         "/1",
     )
     monkeypatch.setattr(service, "cache_get", cache_get)

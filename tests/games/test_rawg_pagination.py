@@ -30,7 +30,11 @@ async def rawg_client(
             200,
             json={
                 "count": 30,
-                "next": f"{upstream_link}&page={page + 1}" if page < 3 else None,
+                "next": (
+                    f"{upstream_link}&page={page + 1}"
+                    if page < 3 or page == 100
+                    else None
+                ),
                 "previous": f"{upstream_link}&page={page - 1}" if page > 1 else None,
                 "results": (
                     [
@@ -125,6 +129,18 @@ async def test_platform_links_are_local_on_miss_and_hit(
     assert SENTINEL not in cached.text
     assert len(requests) == 2
     await _assert_cache_has_no_key("rawg:platforms:v2:*")
+
+
+async def test_search_last_allowed_page_has_no_invalid_next_link(
+    rawg_client: tuple[AsyncClient, list[httpx.Request]],
+) -> None:
+    client, requests = rawg_client
+    response = await client.get(
+        "/api/v1/games/search", params={"query": "Space", "page": 100}
+    )
+    assert response.status_code == 200
+    assert response.json()["next"] is None
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize("sizes", [(1, 3), (3, 1)])

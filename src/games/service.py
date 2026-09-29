@@ -14,6 +14,7 @@ from src.games.constants import (
     GENRES_CACHE_TTL,
     PLATFORMS_CACHE_TTL,
     SEARCH_CACHE_TTL,
+    SEARCH_MAX_PAGE,
 )
 from src.games.exceptions import (
     GameAlreadyTrackedException,
@@ -62,7 +63,7 @@ def _safe_search_result(
         update={
             "next": (
                 _local_page_link(path, page + 1, params)
-                if result.next is not None
+                if result.next is not None and page < SEARCH_MAX_PAGE
                 else None
             ),
             "previous": (
@@ -311,13 +312,13 @@ async def update_user_game(
 ) -> UserGame:
     user_game = await get_user_game_or_404(user_id, user_game_id, db)
 
-    if data.status is not None:
+    if "status" in data.model_fields_set:
         user_game.status = data.status
-    if data.personal_rating is not None:
+    if "personal_rating" in data.model_fields_set:
         user_game.personal_rating = data.personal_rating
-    if data.tier is not None:
+    if "tier" in data.model_fields_set:
         user_game.tier = data.tier
-    if data.notes is not None:
+    if "notes" in data.model_fields_set:
         user_game.notes = data.notes
 
     db.add(user_game)

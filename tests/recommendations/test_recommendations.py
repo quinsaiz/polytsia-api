@@ -248,6 +248,83 @@ def test_personal_rating_uses_ten_point_scale(
             schema(personal_rating=rating)
 
 
+@pytest.mark.parametrize("media", ["movies", "games"])
+@pytest.mark.parametrize("cleared_field", ["personal_rating", "tier"])
+async def test_patch_clear_excludes_rating_from_recommendations(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    db: AsyncSession,
+    test_user: User,
+    candidate_pool: dict[str, list[dict[str, object]]],
+    media: str,
+    cleared_field: str,
+) -> None:
+    if media == "movies":
+        tracked = [
+            UserMovie(
+                user_id=test_user.id,
+                tmdb_id=index,
+                status="completed",
+                tier="A",
+                personal_rating=8 if index < 4 else 2,
+            )
+            for index in range(1, 5)
+        ]
+        cache_key = MOVIE_CANDIDATES_CACHE_KEY
+        candidate_pool[cache_key] = [
+            {"tmdb_id": 100, "title": "Candidate", "rating": 7.0}
+        ]
+        threshold_before, threshold_after = 6.5, 8.0
+    else:
+        tracked = [
+            UserGame(
+                user_id=test_user.id,
+                rawg_id=index,
+                status="completed",
+                tier="A",
+                personal_rating=8 if index < 4 else 2,
+            )
+            for index in range(1, 5)
+        ]
+        cache_key = GAME_CANDIDATES_CACHE_KEY
+        candidate_pool[cache_key] = [
+            {"rawg_id": 100, "name": "Candidate", "rating": 3.3}
+        ]
+        threshold_before, threshold_after = 3.25, 4.0
+    db.add_all(tracked)
+    await db.commit()
+
+    recommendations_url = f"/api/v1/recommendations/{media}"
+    tracked_url = f"/api/v1/{media}/{tracked[-1].id}"
+
+    before = await client.get(recommendations_url, headers=auth_headers)
+    assert before.status_code == 200
+    assert before.json()["threshold"] == pytest.approx(threshold_before)
+    assert len(before.json()[media]) == 1
+
+    omitted = await client.patch(
+        tracked_url, json={"notes": "kept"}, headers=auth_headers
+    )
+    assert omitted.status_code == 200
+    assert omitted.json()["personal_rating"] == 2
+    assert omitted.json()["tier"] == "A"
+    unchanged = await client.get(recommendations_url, headers=auth_headers)
+    assert unchanged.json()["threshold"] == pytest.approx(threshold_before)
+    assert len(unchanged.json()[media]) == 1
+
+    cleared = await client.patch(
+        tracked_url, json={cleared_field: None}, headers=auth_headers
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()[cleared_field] is None
+    other_field = "tier" if cleared_field == "personal_rating" else "personal_rating"
+    assert cleared.json()[other_field] == ("A" if other_field == "tier" else 2)
+    after = await client.get(recommendations_url, headers=auth_headers)
+    assert after.json()["threshold"] == pytest.approx(threshold_after)
+    assert after.json()["is_personalized"] is True
+    assert after.json()[media] == []
+
+
 class TestMovieRecommendations:
     async def test_filtered_by_weighted_threshold(
         self,

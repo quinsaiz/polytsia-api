@@ -1,13 +1,13 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from src.tierlists.constants import MediaType, TierRank
 
 
 class CreateTierListSchema(BaseModel):
-    name: str
+    name: str = Field(max_length=100)
     media_type: MediaType
 
 

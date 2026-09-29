@@ -53,10 +53,10 @@ class TrackMovieSchema(BaseModel):
 
 
 class UpdateUserMovieSchema(BaseModel):
-    status: WatchStatus | None = None
+    status: WatchStatus = WatchStatus.PLANNED
     personal_rating: int | None = Field(default=None, ge=0, le=10)
     tier: TierRank | None = None
-    notes: str | None = None
+    notes: str | None = Field(default=None, max_length=1000)
 
 
 class UserMovieResponseSchema(BaseModel):

@@ -1,3 +1,4 @@
+import pytest
 from httpx import AsyncClient
 
 
@@ -16,6 +17,44 @@ class TestSearch:
         assert data["results"][0]["name"] == "The Witcher 3: Wild Hunt"
         assert data["results"][0]["id"] == 155
         assert data["results"][0]["genres"][0]["name"] == "Action"
+
+    @pytest.mark.parametrize("page", [1, 100])
+    async def test_search_page_boundaries(
+        self, client_with_mock_rawg: AsyncClient, page: int
+    ) -> None:
+        response = await client_with_mock_rawg.get(
+            "/api/v1/games/search", params={"query": "Witcher", "page": page}
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("page", [0, 101])
+    async def test_search_page_outside_bounds(
+        self, client_with_mock_rawg: AsyncClient, page: int
+    ) -> None:
+        response = await client_with_mock_rawg.get(
+            "/api/v1/games/search", params={"query": "Witcher", "page": page}
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("page_size", [1, 40])
+    async def test_search_page_size_boundaries(
+        self, client_with_mock_rawg: AsyncClient, page_size: int
+    ) -> None:
+        response = await client_with_mock_rawg.get(
+            "/api/v1/games/search",
+            params={"query": "Witcher", "page_size": page_size},
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.parametrize("page_size", [0, 41])
+    async def test_search_page_size_outside_bounds(
+        self, client_with_mock_rawg: AsyncClient, page_size: int
+    ) -> None:
+        response = await client_with_mock_rawg.get(
+            "/api/v1/games/search",
+            params={"query": "Witcher", "page_size": page_size},
+        )
+        assert response.status_code == 422
 
 
 class TestGetDetails:
@@ -151,6 +190,64 @@ class TestTracking:
         assert data["personal_rating"] == 10
         assert data["tier"] == "S"
         assert data["notes"] == "Masterpiece RPG"
+
+    async def test_patch_omitted_then_null_optional_fields(
+        self, client_with_mock_rawg: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        tracked = await client_with_mock_rawg.post(
+            "/api/v1/games/track", json={"rawg_id": 155}, headers=auth_headers
+        )
+        url = f"/api/v1/games/{tracked.json()['id']}"
+        values = {"personal_rating": 8, "tier": "A", "notes": "Good"}
+        filled = await client_with_mock_rawg.patch(
+            url, json=values, headers=auth_headers
+        )
+        assert filled.status_code == 200
+
+        omitted = await client_with_mock_rawg.patch(
+            url, json={"status": "playing"}, headers=auth_headers
+        )
+        assert omitted.status_code == 200
+        assert omitted.json()["status"] == "playing"
+        assert {key: omitted.json()[key] for key in values} == values
+
+        cleared = await client_with_mock_rawg.patch(
+            url, json={key: None for key in values}, headers=auth_headers
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["status"] == "playing"
+        assert all(cleared.json()[key] is None for key in values)
+
+    async def test_patch_null_status_is_422(
+        self, client_with_mock_rawg: AsyncClient, auth_headers: dict[str, str]
+    ) -> None:
+        tracked = await client_with_mock_rawg.post(
+            "/api/v1/games/track", json={"rawg_id": 155}, headers=auth_headers
+        )
+        response = await client_with_mock_rawg.patch(
+            f"/api/v1/games/{tracked.json()['id']}",
+            json={"status": None},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("length, expected", [(1000, 200), (1001, 422)])
+    async def test_notes_length(
+        self,
+        client_with_mock_rawg: AsyncClient,
+        auth_headers: dict[str, str],
+        length: int,
+        expected: int,
+    ) -> None:
+        tracked = await client_with_mock_rawg.post(
+            "/api/v1/games/track", json={"rawg_id": 155}, headers=auth_headers
+        )
+        response = await client_with_mock_rawg.patch(
+            f"/api/v1/games/{tracked.json()['id']}",
+            json={"notes": "x" * length},
+            headers=auth_headers,
+        )
+        assert response.status_code == expected
 
     async def test_delete_user_game(
         self,
