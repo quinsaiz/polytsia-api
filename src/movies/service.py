@@ -6,6 +6,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.movies.constants import (
+    GENRES_CACHE_TTL,
+    MOVIE_DETAIL_CACHE_TTL,
+    SEARCH_CACHE_TTL,
+)
 from src.movies.exceptions import (
     MovieAlreadyTrackedException,
     MovieNotFoundException,
@@ -24,10 +29,6 @@ from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
-
-SEARCH_CACHE_TTL = 3600
-MOVIE_DETAIL_CACHE_TTL = 86400
-GENRES_CACHE_TTL = 604800
 
 
 def _tmdb_headers() -> dict[str, str]:
@@ -81,14 +82,12 @@ async def get_movie_details(
             f"{settings.tmdb_base_url}/movie/{tmdb_id}",
             headers=_tmdb_headers(),
         )
+        if response.status_code == 404:
+            raise MovieNotFoundException()
+        response.raise_for_status()
     except httpx.HTTPError as e:
         logger.error("TMDB movie detail request failed: %s", e)
         raise TMDBServiceUnavailableException() from e
-
-    if response.status_code == 404:
-        raise MovieNotFoundException()
-
-    response.raise_for_status()
 
     data = response.json()
     result = TMDBMovieSchema.model_validate(data)
@@ -127,6 +126,7 @@ async def get_genres(http_client: httpx.AsyncClient) -> TMDBGenreListSchema:
 async def track_movie(
     user_id: uuid.UUID,
     data: TrackMovieSchema,
+    http_client: httpx.AsyncClient,
     db: AsyncSession,
 ) -> UserMovie:
     stmt = select(UserMovie).where(
@@ -137,10 +137,15 @@ async def track_movie(
     if result.scalar_one_or_none() is not None:
         raise MovieAlreadyTrackedException()
 
+    movie_details = await get_movie_details(
+        tmdb_id=data.tmdb_id, http_client=http_client
+    )
+
     user_movie = UserMovie(
         user_id=user_id,
         tmdb_id=data.tmdb_id,
         status=data.status,
+        external_rating=movie_details.vote_average,
     )
     db.add(user_movie)
     await db.commit()

@@ -54,9 +54,15 @@ async def get_details(tmdb_id: int, http_client: HttpClientDep) -> TMDBMovieSche
 async def track(
     data: TrackMovieSchema,
     current_user: CurrentUserDep,
+    http_client: HttpClientDep,
     db: DbSessionDep,
 ) -> UserMovieResponseSchema:
-    user_movie = await track_movie(data=data, user_id=current_user.id, db=db)
+    user_movie = await track_movie(
+        data=data,
+        user_id=current_user.id,
+        http_client=http_client,
+        db=db,
+    )
     return UserMovieResponseSchema.model_validate(user_movie)
 
 

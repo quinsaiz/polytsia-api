@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     UUID,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -30,6 +31,7 @@ class UserMovie(Base):
     status: Mapped[str] = mapped_column(String(20), default=WatchStatus.PLANNED)
     personal_rating: Mapped[int | None] = mapped_column(Integer)
     tier: Mapped[str | None] = mapped_column(String(1))
+    external_rating: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str | None] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

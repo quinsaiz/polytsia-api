@@ -6,6 +6,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.games.constants import (
+    GAME_DETAIL_CACHE_TTL,
+    GENRES_CACHE_TTL,
+    PLATFORMS_CACHE_TTL,
+    SEARCH_CACHE_TTL,
+)
 from src.games.exceptions import (
     GameAlreadyTrackedException,
     GameNotFoundException,
@@ -25,11 +31,14 @@ from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-SEARCH_CACHE_TTL = 3600
-GAME_DETAIL_CACHE_TTL = 86400
-GENRES_CACHE_TTL = 604800
-PLATFORMS_CACHE_TTL = 604800
+
+def _log_rawg_http_error(action: str, error: httpx.HTTPError) -> None:
+    status = (
+        error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+    )
+    logger.error("RAWG %s failed: %s, status=%s", action, type(error).__name__, status)
 
 
 def _rawg_headers() -> dict[str, str]:
@@ -62,8 +71,8 @@ async def search_games(
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG search request failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("search", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGSearchResultSchema.model_validate(data)
@@ -90,14 +99,12 @@ async def get_game_details(
             headers=_rawg_headers(),
             params={"key": settings.rawg_api_key},
         )
+        if response.status_code == 404:
+            raise GameNotFoundException()
+        response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG game detail failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
-
-    if response.status_code == 404:
-        raise GameNotFoundException()
-
-    response.raise_for_status()
+        _log_rawg_http_error("game detail", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGGameSchema.model_validate(data)
@@ -123,8 +130,8 @@ async def get_genres(http_client: httpx.AsyncClient) -> RAWGGenreListSchema:
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG genre list request failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("genre list", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGGenreListSchema.model_validate(data)
@@ -150,8 +157,8 @@ async def get_platforms(http_client: httpx.AsyncClient) -> RAWGPlatformListSchem
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG platform list request failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("platform list", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGPlatformListSchema.model_validate(data)
@@ -164,6 +171,7 @@ async def get_platforms(http_client: httpx.AsyncClient) -> RAWGPlatformListSchem
 async def track_game(
     user_id: uuid.UUID,
     data: TrackGameSchema,
+    http_client: httpx.AsyncClient,
     db: AsyncSession,
 ) -> UserGame:
     stmt = select(UserGame).where(
@@ -175,10 +183,13 @@ async def track_game(
     if result.scalar_one_or_none() is not None:
         raise GameAlreadyTrackedException()
 
+    game_details = await get_game_details(rawg_id=data.rawg_id, http_client=http_client)
+
     user_game = UserGame(
         user_id=user_id,
         rawg_id=data.rawg_id,
         status=data.status,
+        external_rating=game_details.rating,
     )
     db.add(user_game)
     await db.commit()

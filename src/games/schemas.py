@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.games.constants import PlayStatus, TierRank
 
@@ -56,7 +56,7 @@ class TrackGameSchema(BaseModel):
 
 class UpdateUserGameSchema(BaseModel):
     status: PlayStatus | None = None
-    personal_rating: int | None = None
+    personal_rating: int | None = Field(default=None, ge=0, le=10)
     tier: TierRank | None = None
     notes: str | None = None
 
@@ -69,6 +69,7 @@ class UserGameResponseSchema(BaseModel):
     status: PlayStatus
     personal_rating: int | None
     tier: TierRank | None
+    external_rating: float | None
     notes: str | None
     created_at: datetime
     updated_at: datetime

@@ -17,6 +17,7 @@ Built with FastAPI, SQLAlchemy 2, and Docker. Designed as a pet project but stru
 - **Authentication** — JWT access + refresh tokens with rotation, bcrypt password hashing, OAuth2-compatible login flow
 - **Pagination** — generic paginated responses with page/page_size/total_pages metadata
 - **Redis caching** — search results (1 h), detail pages (24 h), genre/platform catalogs (7 d)
+- **Recommendations** — personal movie and game suggestions from Redis candidate pools refreshed by Celery
 - **Database migrations** — Alembic with async PostgreSQL support and autogenerate
 - **API documentation** — interactive Swagger UI and ReDoc (debug mode only)
 
@@ -35,6 +36,7 @@ Built with FastAPI, SQLAlchemy 2, and Docker. Designed as a pet project but stru
 | Database         | PostgreSQL 17                    |
 | Migrations       | Alembic (async)                  |
 | Server           | Uvicorn (ASGI)                   |
+| Background jobs  | Celery worker + beat             |
 | Containerization | Docker + Docker Compose          |
 | Package manager  | uv                               |
 | Linting          | Ruff + mypy (strict)             |
@@ -57,7 +59,7 @@ src/
 ├── games/               # RAWG proxy, UserGame model, track/update/delete
 ├── tierlists/           # TierList + TierListItem models, CRUD with ownership checks
 ├── profile/             # (planned) user profile features
-└── recommendations/     # (planned) recommendation engine
+└── recommendations/     # Candidate collection, bootstrap, and personalized API
 
 alembic/                 # Database migration scripts (async PostgreSQL)
 tests/                   # pytest-asyncio integration tests per module
@@ -120,14 +122,17 @@ docker compose up --build
 
 Services started:
 
-| Service      | URL                             |
-|--------------|---------------------------------|
-| REST API     | <http://localhost:8000/api/v1/> |
-| Swagger UI   | <http://localhost:8000/docs>    |
-| ReDoc        | <http://localhost:8000/redoc>   |
-| Health check | <http://localhost:8000/health>  |
-| PostgreSQL   | localhost:15432                 |
-| Redis        | localhost:16379                 |
+| Service        | URL                             |
+|----------------|---------------------------------|
+| REST API       | <http://localhost:8000/api/v1/> |
+| Swagger UI     | <http://localhost:8000/docs>    |
+| ReDoc          | <http://localhost:8000/redoc>   |
+| Health check   | <http://localhost:8000/health>  |
+| PostgreSQL     | localhost:15432                 |
+| Redis          | localhost:16379                 |
+| Celery worker  | Background candidate refresh    |
+| Celery beat    | Daily refresh schedule          |
+| Bootstrap job  | Queues missing pools at startup |
 
 Swagger and ReDoc are available only when `DEBUG=True`.
 
@@ -186,6 +191,42 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 
 All tier list endpoints require authentication. Items reference tracked movies or games by ID.
 
+### Recommendations
+
+All three GET routes require a bearer access token:
+
+| Endpoint                         | Response fields |
+|----------------------------------|-----------------|
+| `/api/v1/recommendations/`        | `movie_threshold`, `game_threshold`, `is_movies_personalized`, `is_games_personalized`, `movies_pool_available`, `games_pool_available`, `movies`, `games` |
+| `/api/v1/recommendations/movies`  | `threshold`, `is_personalized`, `pool_available`, `movies` |
+| `/api/v1/recommendations/games`   | `threshold`, `is_personalized`, `pool_available`, `games` |
+
+`movies` contain `tmdb_id`, `title`, `rating`, `overview`, `genre_ids`, and `poster_path`. `games` contain `rawg_id`,
+`name`, `rating`, and `background_image`. The `rating` in each result is the catalog rating from TMDB or RAWG. Results
+are sorted by this rating, highest first, and limited to 20 per media type.
+
+For each media type, personalization needs at least three tracked records with both a personal rating and a personal
+`UserMovie.tier` or `UserGame.tier`. Personal ratings accepted by the update API range from 0 to 10. The threshold is
+the tier-weighted average of **personal ratings**: S=5, A=4, B=3, C=2, D=1, F=0.5. Movie personal ratings are
+compared directly with TMDB's 0–10 candidate ratings; game personal ratings are divided by two before comparison
+with RAWG's 0–5 candidate ratings. A candidate passes when its catalog rating is at least the threshold minus 0.5.
+`TierListItem.tier` is only a rank within its own list and does not
+affect recommendations; the same tracked title may have different ranks in different lists. Every already tracked
+TMDB/RAWG ID is excluded, regardless of status. With fewer than three eligible records, `threshold` is `null`,
+`is_personalized` is `false`, and all untracked pool entries may be shown.
+
+Candidate pools are shared between users. Each refresh collects up to 100 unique titles per media type, fetching up
+to 20 pages or stopping when the source is exhausted. TMDB discovery sorts by vote average and requests at least
+1,000 votes; RAWG sorts by rating and keeps games with at least 500 ratings. A pool may contain fewer than 100 titles.
+Redis stores each pool for 26 hours. On `docker compose up --build`, a one-off bootstrap service queues refresh jobs
+for missing pools; the Celery worker collects the candidates. This does not delay FastAPI requests while external
+catalog pages are fetched. Celery beat refreshes movies daily at 03:00 and games at 03:15 in the configured time zone
+(UTC by default). To queue missing pools again, run `docker compose run --rm recommendations_bootstrap`; an existing
+pool is left alone. If a pool key is absent or has expired, its route still returns HTTP 200 with an empty result list
+and `pool_available: false` (or `movies_pool_available` / `games_pool_available` on the combined route). An existing
+pool whose entries are all filtered out returns an empty list with `pool_available: true`. The API does not collect
+candidates on demand. A Redis read failure is treated as an unavailable pool by the current cache helper.
+
 ---
 
 ## Data Model
@@ -202,6 +243,9 @@ users
 Each tracked movie/game stores: status (`planned` / `watching|playing` / `completed` / `dropped`), personal rating, tier
 rank (S--F), and free-text notes.
 
+The tracked record also stores the external catalog rating captured when it was added. This stored external rating
+does not determine the recommendation threshold; the user's `personal_rating` and tracking `tier` do.
+
 Tier list items enforce a check constraint ensuring exactly one media reference per item, and uniqueness constraints
 prevent duplicates within a list.
 
@@ -209,16 +253,16 @@ prevent duplicates within a list.
 
 ## Running Tests
 
-Tests use a separate `polytsia_test` database, per-test transaction rollback, and httpx `ASGITransport` for in-process
-API calls.
+Tests use a `polytsia_test` database name, per-test transaction rollback, and httpx `ASGITransport` for in-process
+API calls. The name alone does not isolate the PostgreSQL instance. Run tests only with a separate test PostgreSQL
+instance and Redis instance: older movie/game fixtures call Redis `FLUSHDB`. Recommendation tests replace the cache
+with an in-memory mapping except for the Redis pipeline tests, which require dedicated test services on
+`localhost:25432` (PostgreSQL) and `localhost:26379` (Redis), plus `POLYTSIA_TEST_ISOLATED_SERVICES=1`.
 
 ```bash
-# Inside the container
-pytest
-
-# Or via Docker Compose
-docker compose run --rm backend pytest
+# After starting isolated test services and setting test-only environment variables
+pytest tests/recommendations
 ```
 
-Tests cover: authentication flow (register, login, token refresh, logout, password change, profile update), movie
-tracking CRUD, game tracking CRUD, and tier list operations.
+The suite also contains authentication, movie/game tracking, and tier list tests; their Redis fixtures require the
+same isolation before running the full suite.

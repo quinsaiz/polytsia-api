@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     app_name: str = "Polytsia"
     debug: bool = False
+    timezone: str = "UTC"
 
     # Security
     secret_key: str

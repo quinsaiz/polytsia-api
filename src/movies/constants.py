@@ -1,5 +1,9 @@
 from enum import StrEnum
 
+SEARCH_CACHE_TTL = 3600
+MOVIE_DETAIL_CACHE_TTL = 86400
+GENRES_CACHE_TTL = 604800
+
 
 class WatchStatus(StrEnum):
     PLANNED = "planned"

@@ -67,10 +67,10 @@ class TestGenres:
 class TestTracking:
     async def test_track_game_success(
         self,
-        client: AsyncClient,
+        client_with_mock_rawg: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        response = await client.post(
+        response = await client_with_mock_rawg.post(
             "/api/v1/games/track",
             json={"rawg_id": 155, "status": "planned"},
             headers=auth_headers,
@@ -79,18 +79,19 @@ class TestTracking:
         data = response.json()
         assert data["rawg_id"] == 155
         assert data["status"] == "planned"
+        assert data["external_rating"] == 4.66
 
     async def test_track_game_duplicate(
         self,
-        client: AsyncClient,
+        client_with_mock_rawg: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        await client.post(
+        await client_with_mock_rawg.post(
             "/api/v1/games/track",
             json={"rawg_id": 155, "status": "planned"},
             headers=auth_headers,
         )
-        response = await client.post(
+        response = await client_with_mock_rawg.post(
             "/api/v1/games/track",
             json={"rawg_id": 155, "status": "planned"},
             headers=auth_headers,
@@ -106,15 +107,17 @@ class TestTracking:
 
     async def test_list_my_games(
         self,
-        client: AsyncClient,
+        client_with_mock_rawg: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        await client.post(
+        await client_with_mock_rawg.post(
             "/api/v1/games/track",
             json={"rawg_id": 155, "status": "planned"},
             headers=auth_headers,
         )
-        response = await client.get("/api/v1/games/", headers=auth_headers)
+        response = await client_with_mock_rawg.get(
+            "/api/v1/games/", headers=auth_headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 1
@@ -122,17 +125,17 @@ class TestTracking:
 
     async def test_update_user_game(
         self,
-        client: AsyncClient,
+        client_with_mock_rawg: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        track_response = await client.post(
+        track_response = await client_with_mock_rawg.post(
             "/api/v1/games/track",
             json={"rawg_id": 155, "status": "planned"},
             headers=auth_headers,
         )
         user_game_id = track_response.json()["id"]
 
-        response = await client.patch(
+        response = await client_with_mock_rawg.patch(
             f"/api/v1/games/{user_game_id}",
             json={
                 "status": "playing",
@@ -151,17 +154,17 @@ class TestTracking:
 
     async def test_delete_user_game(
         self,
-        client: AsyncClient,
+        client_with_mock_rawg: AsyncClient,
         auth_headers: dict[str, str],
     ) -> None:
-        track_response = await client.post(
+        track_response = await client_with_mock_rawg.post(
             "/api/v1/games/track",
             json={"rawg_id": 155, "status": "planned"},
             headers=auth_headers,
         )
         user_game_id = track_response.json()["id"]
 
-        response = await client.delete(
+        response = await client_with_mock_rawg.delete(
             f"/api/v1/games/{user_game_id}",
             headers=auth_headers,
         )
