@@ -4,9 +4,11 @@ from urllib.parse import urlencode
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.database import is_unique_constraint_violation
 from src.games.constants import (
     GAME_DETAIL_CACHE_TTL,
     GENRES_CACHE_TTL,
@@ -241,7 +243,13 @@ async def track_game(
         external_rating=game_details.rating,
     )
     db.add(user_game)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        if is_unique_constraint_violation(error, "uq_user_game"):
+            raise GameAlreadyTrackedException() from error
+        raise
     await db.refresh(user_game)
 
     logger.info("User %s tracked game rawg_id=%s", user_id, data.rawg_id)

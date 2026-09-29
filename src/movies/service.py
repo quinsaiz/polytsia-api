@@ -3,9 +3,11 @@ import uuid
 
 import httpx
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.database import is_unique_constraint_violation
 from src.movies.constants import (
     GENRES_CACHE_TTL,
     MOVIE_DETAIL_CACHE_TTL,
@@ -148,7 +150,13 @@ async def track_movie(
         external_rating=movie_details.vote_average,
     )
     db.add(user_movie)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        if is_unique_constraint_violation(error, "uq_user_movie"):
+            raise MovieAlreadyTrackedException() from error
+        raise
     await db.refresh(user_movie)
 
     logger.info("User %s tracked movie tmdb_id=%s", user_id, data.tmdb_id)

@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import Depends
 from fastapi.exceptions import HTTPException, RequestValidationError
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -24,6 +24,18 @@ AsyncSessionFactory = async_sessionmaker(engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
     pass
+
+
+def is_unique_constraint_violation(error: IntegrityError, constraint: str) -> bool:
+    cause = error.orig
+    while cause is not None:
+        if (
+            getattr(cause, "sqlstate", None) == "23505"
+            and getattr(cause, "constraint_name", None) == constraint
+        ):
+            return True
+        cause = cause.__cause__
+    return False
 
 
 def import_all_models() -> None:
