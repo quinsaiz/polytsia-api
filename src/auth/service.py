@@ -83,14 +83,17 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def save_refresh_token(user_id: uuid.UUID, token: str, db: AsyncSession) -> None:
-    refresh_token = RefreshToken(
+def _refresh_token_record(user_id: uuid.UUID, token: str) -> RefreshToken:
+    return RefreshToken(
         user_id=user_id,
         token_hash=_hash_token(token),
         expires_at=datetime.now(UTC)
         + timedelta(days=settings.refresh_token_expire_days),
     )
-    db.add(refresh_token)
+
+
+async def save_refresh_token(user_id: uuid.UUID, token: str, db: AsyncSession) -> None:
+    db.add(_refresh_token_record(user_id, token))
     await db.commit()
 
 
@@ -116,12 +119,22 @@ async def refresh_access_token(refresh_token: str, db: AsyncSession) -> TokenSch
         await db.commit()
         raise InvalidCredentialsException()
 
-    await db.delete(db_token)
-    await db.commit()
+    try:
+        consumed = await db.execute(
+            delete(RefreshToken)
+            .where(RefreshToken.id == db_token.id)
+            .returning(RefreshToken.id)
+        )
+        if consumed.scalar_one_or_none() is None:
+            raise InvalidCredentialsException()
 
-    new_access = create_access_token(payload.sub)
-    new_refresh = create_refresh_token(payload.sub)
-    await save_refresh_token(payload.sub, new_refresh, db)
+        new_access = create_access_token(payload.sub)
+        new_refresh = create_refresh_token(payload.sub)
+        db.add(_refresh_token_record(payload.sub, new_refresh))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
     logger.info("Refresh token rotated for user: %s", payload.sub)
 
