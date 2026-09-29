@@ -207,7 +207,19 @@ For tracked movie and game PATCH requests, omitted fields keep their current val
 
 All tier list endpoints require authentication. Items reference tracked movies or games by ID.
 Tier list names may contain at most 100 characters.
-Setting an item's position does not shift other items automatically.
+Positions are zero-based and dense within each tier of each list. Adding an item at
+position `p` shifts items at `p` and later positions right. Moving an item closes
+its old position and opens its new position, including moves between tiers.
+Deleting an item or its tracked movie/game closes its gap. Responses order
+items by tier (`S`, `A`, `B`, `C`, `D`, `F`) and then by position.
+
+Omitting `position` (or sending `null`) appends to the target tier. On add, valid
+positions are `0` through the tier's current length; on move, they are `0`
+through the target tier's length after removing the item. Invalid positions
+return 422. Moving an item to its current tier and position succeeds without
+changing the order. Each list serializes concurrent changes to its order.
+The same tracked item may appear once in a list; a second add returns 409.
+An item whose tracked movie or game disappears before insertion returns 404.
 
 ### Recommendations
 

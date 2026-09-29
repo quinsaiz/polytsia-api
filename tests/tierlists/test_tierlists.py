@@ -1,6 +1,8 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.models import User
 from src.games.models import UserGame
 from src.movies.models import UserMovie
 
@@ -300,13 +302,13 @@ class TestMoveItem:
 
         response = await client.patch(
             f"/api/v1/tierlists/{movie_tier_list_id}/items/{item_id}",
-            json={"tier": "S", "position": 2},
+            json={"tier": "S", "position": 0},
             headers=auth_headers,
         )
         assert response.status_code == 200
         data = response.json()
         assert data["tier"] == "S"
-        assert data["position"] == 2
+        assert data["position"] == 0
 
 
 class TestDeleteItem:
@@ -349,3 +351,232 @@ class TestDeleteItem:
             headers=auth_headers,
         )
         assert response.status_code == 404
+
+
+async def _make_movies(db: AsyncSession, user: User, count: int) -> list[UserMovie]:
+    movies = [
+        UserMovie(user_id=user.id, tmdb_id=10000 + index, status="watched")
+        for index in range(count)
+    ]
+    db.add_all(movies)
+    await db.commit()
+    return movies
+
+
+async def _add_movie(
+    client: AsyncClient,
+    headers: dict[str, str],
+    list_id: str,
+    movie: UserMovie,
+    tier: str,
+    position: int | None = None,
+) -> str:
+    payload: dict[str, str | int] = {"user_movie_id": str(movie.id), "tier": tier}
+    if position is not None:
+        payload["position"] = position
+    response = await client.post(
+        f"/api/v1/tierlists/{list_id}/items", json=payload, headers=headers
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def _positions(
+    client: AsyncClient, headers: dict[str, str], list_id: str
+) -> list[tuple[str, int, str]]:
+    response = await client.get(f"/api/v1/tierlists/{list_id}", headers=headers)
+    assert response.status_code == 200
+    return [
+        (item["tier"], item["position"], item["id"])
+        for item in response.json()["items"]
+    ]
+
+
+async def test_dense_insert_move_and_delete(
+    client: AsyncClient,
+    db: AsyncSession,
+    test_user: User,
+    auth_headers: dict[str, str],
+    movie_tier_list_id: str,
+) -> None:
+    movies = await _make_movies(db, test_user, 4)
+    first = await _add_movie(client, auth_headers, movie_tier_list_id, movies[0], "S")
+    second = await _add_movie(client, auth_headers, movie_tier_list_id, movies[1], "S")
+    third = await _add_movie(
+        client, auth_headers, movie_tier_list_id, movies[2], "S", 1
+    )
+    other = await _add_movie(client, auth_headers, movie_tier_list_id, movies[3], "A")
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, first),
+        ("S", 1, third),
+        ("S", 2, second),
+        ("A", 0, other),
+    ]
+
+    async def move(item_id: str, tier: str, position: int | None) -> None:
+        payload: dict[str, str | int] = {"tier": tier}
+        if position is not None:
+            payload["position"] = position
+        response = await client.patch(
+            f"/api/v1/tierlists/{movie_tier_list_id}/items/{item_id}",
+            json=payload,
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+
+    await move(first, "S", 2)
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, third),
+        ("S", 1, second),
+        ("S", 2, first),
+        ("A", 0, other),
+    ]
+    await move(first, "S", 0)
+    await move(third, "A", 0)
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, first),
+        ("S", 1, second),
+        ("A", 0, third),
+        ("A", 1, other),
+    ]
+    await move(third, "S", None)
+    await move(second, "S", 1)
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, first),
+        ("S", 1, second),
+        ("S", 2, third),
+        ("A", 0, other),
+    ]
+    response = await client.delete(
+        f"/api/v1/tierlists/{movie_tier_list_id}/items/{second}",
+        headers=auth_headers,
+    )
+    assert response.status_code == 204
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, first),
+        ("S", 1, third),
+        ("A", 0, other),
+    ]
+
+
+async def test_position_bounds_and_append(
+    client: AsyncClient,
+    db: AsyncSession,
+    test_user: User,
+    auth_headers: dict[str, str],
+    movie_tier_list_id: str,
+) -> None:
+    first, second = await _make_movies(db, test_user, 2)
+    url = f"/api/v1/tierlists/{movie_tier_list_id}/items"
+    for position in (-1, 1):
+        response = await client.post(
+            url,
+            json={"user_movie_id": str(first.id), "tier": "S", "position": position},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
+    first_id = await _add_movie(client, auth_headers, movie_tier_list_id, first, "S")
+    second_id = await _add_movie(client, auth_headers, movie_tier_list_id, second, "S")
+    for position in (-1, 2):
+        response = await client.patch(
+            f"{url}/{first_id}",
+            json={"tier": "S", "position": position},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
+    response = await client.patch(
+        f"{url}/{first_id}", json={"tier": "A", "position": 1}, headers=auth_headers
+    )
+    assert response.status_code == 422
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, first_id),
+        ("S", 1, second_id),
+    ]
+    response = await client.patch(
+        f"{url}/{first_id}", json={"tier": "S"}, headers=auth_headers
+    )
+    assert response.status_code == 200
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, second_id),
+        ("S", 1, first_id),
+    ]
+
+
+async def test_tracked_movie_deletion_closes_tier_gap_and_keeps_personal_tier(
+    client: AsyncClient,
+    db: AsyncSession,
+    test_user: User,
+    auth_headers: dict[str, str],
+    movie_tier_list_id: str,
+) -> None:
+    movies = await _make_movies(db, test_user, 3)
+    movies[0].tier = "F"
+    await db.commit()
+    ids = [
+        await _add_movie(client, auth_headers, movie_tier_list_id, movie, "S")
+        for movie in movies
+    ]
+    assert movies[0].tier == "F"
+    response = await client.delete(
+        f"/api/v1/movies/{movies[1].id}", headers=auth_headers
+    )
+    assert response.status_code == 204
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("S", 0, ids[0]),
+        ("S", 1, ids[2]),
+    ]
+
+
+async def test_tracked_game_deletion_closes_tier_gap(
+    client: AsyncClient,
+    db: AsyncSession,
+    test_user: User,
+    auth_headers: dict[str, str],
+    game_tier_list_id: str,
+) -> None:
+    games = [
+        UserGame(
+            user_id=test_user.id, rawg_id=30000 + index, status="planned", tier="D"
+        )
+        for index in range(3)
+    ]
+    db.add_all(games)
+    await db.commit()
+    ids = []
+    for game in games:
+        response = await client.post(
+            f"/api/v1/tierlists/{game_tier_list_id}/items",
+            json={"user_game_id": str(game.id), "tier": "A"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 201
+        ids.append(response.json()["id"])
+    assert games[0].tier == "D"
+    response = await client.delete(f"/api/v1/games/{games[1].id}", headers=auth_headers)
+    assert response.status_code == 204
+    assert await _positions(client, auth_headers, game_tier_list_id) == [
+        ("A", 0, ids[0]),
+        ("A", 1, ids[2]),
+    ]
+
+
+async def test_other_user_cannot_move_or_remove_item(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+    other_auth_headers: dict[str, str],
+    movie_tier_list_id: str,
+    tracked_movie: UserMovie,
+) -> None:
+    item_id = await _add_movie(
+        client, auth_headers, movie_tier_list_id, tracked_movie, "C"
+    )
+    url = f"/api/v1/tierlists/{movie_tier_list_id}/items/{item_id}"
+    response = await client.patch(
+        url, json={"tier": "S", "position": 0}, headers=other_auth_headers
+    )
+    assert response.status_code == 404
+    response = await client.delete(url, headers=other_auth_headers)
+    assert response.status_code == 404
+    assert await _positions(client, auth_headers, movie_tier_list_id) == [
+        ("C", 0, item_id)
+    ]

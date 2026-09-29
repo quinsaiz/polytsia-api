@@ -335,9 +335,17 @@ async def delete_user_game(
     user_game_id: uuid.UUID,
     db: AsyncSession,
 ) -> None:
-    user_game = await get_user_game_or_404(user_id, user_game_id, db)
+    from src.tierlists.service import delete_tracked_media_and_compact
 
-    await db.delete(user_game)
-    await db.commit()
+    stmt = (
+        select(UserGame)
+        .where(UserGame.id == user_game_id, UserGame.user_id == user_id)
+        .with_for_update()
+    )
+    user_game = (await db.execute(stmt)).scalar_one_or_none()
+    if user_game is None:
+        raise GameNotFoundException()
+
+    await delete_tracked_media_and_compact(user_game, db)
 
     logger.info("User %s deleted tracked game: %s", user_id, user_game_id)

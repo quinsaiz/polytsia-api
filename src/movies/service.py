@@ -241,9 +241,17 @@ async def delete_user_movie(
     user_movie_id: uuid.UUID,
     db: AsyncSession,
 ) -> None:
-    user_movie = await get_user_movie_or_404(user_id, user_movie_id, db)
+    from src.tierlists.service import delete_tracked_media_and_compact
 
-    await db.delete(user_movie)
-    await db.commit()
+    stmt = (
+        select(UserMovie)
+        .where(UserMovie.id == user_movie_id, UserMovie.user_id == user_id)
+        .with_for_update()
+    )
+    user_movie = (await db.execute(stmt)).scalar_one_or_none()
+    if user_movie is None:
+        raise MovieNotFoundException()
+
+    await delete_tracked_media_and_compact(user_movie, db)
 
     logger.info("User %s removed tracked movie: %s", user_id, user_movie_id)
