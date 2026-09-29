@@ -26,6 +26,9 @@ elif [ "$1" = "celery_worker" ]; then
 elif [ "$1" = "celery_beat" ]; then
   log "Starting Celery Beat..."
   exec celery -A src.celery_app beat --loglevel=info
+elif [ "$1" = "bootstrap_recommendations" ]; then
+  log "Queueing missing recommendation pools..."
+  exec python -m src.recommendations.bootstrap
 else
   log "Custom command detected, executing: $*"
   exec "$@"

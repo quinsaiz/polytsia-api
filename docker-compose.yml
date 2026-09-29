@@ -72,6 +72,21 @@ services:
       backend:
         condition: service_started
 
+  recommendations_bootstrap:
+    build: .
+    command: bootstrap_recommendations
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/.venv
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery_worker:
+        condition: service_started
+    restart: "no"
+
 volumes:
   postgres_data:
   redis_data:

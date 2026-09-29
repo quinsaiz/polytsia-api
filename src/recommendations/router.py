@@ -29,10 +29,13 @@ async def get_movie_recs(
     current_user: CurrentUserDep,
     db: DbSessionDep,
 ) -> MovieRecommendationsResponseSchema:
-    threshold, movies = await get_movie_recommendations(user_id=current_user.id, db=db)
+    threshold, movies, pool_available = await get_movie_recommendations(
+        user_id=current_user.id, db=db
+    )
     return MovieRecommendationsResponseSchema(
         threshold=threshold,
         is_personalized=threshold is not None,
+        pool_available=pool_available,
         movies=movies,
     )
 
@@ -42,9 +45,12 @@ async def get_game_recs(
     current_user: CurrentUserDep,
     db: DbSessionDep,
 ) -> GameRecommendationsResponseSchema:
-    threshold, games = await get_game_recommendations(user_id=current_user.id, db=db)
+    threshold, games, pool_available = await get_game_recommendations(
+        user_id=current_user.id, db=db
+    )
     return GameRecommendationsResponseSchema(
         threshold=threshold,
         is_personalized=threshold is not None,
+        pool_available=pool_available,
         games=games,
     )

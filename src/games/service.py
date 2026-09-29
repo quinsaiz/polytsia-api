@@ -91,14 +91,12 @@ async def get_game_details(
             headers=_rawg_headers(),
             params={"key": settings.rawg_api_key},
         )
+        if response.status_code == 404:
+            raise GameNotFoundException()
+        response.raise_for_status()
     except httpx.HTTPError as e:
         logger.error("RAWG game detail failed: %s", e)
         raise RAWGServiceUnavailableException() from e
-
-    if response.status_code == 404:
-        raise GameNotFoundException()
-
-    response.raise_for_status()
 
     data = response.json()
     result = RAWGGameSchema.model_validate(data)

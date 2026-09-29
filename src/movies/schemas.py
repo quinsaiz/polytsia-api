@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from src.movies.constants import TierRank, WatchStatus
 
@@ -54,7 +54,7 @@ class TrackMovieSchema(BaseModel):
 
 class UpdateUserMovieSchema(BaseModel):
     status: WatchStatus | None = None
-    personal_rating: int | None = None
+    personal_rating: int | None = Field(default=None, ge=0, le=10)
     tier: TierRank | None = None
     notes: str | None = None
 

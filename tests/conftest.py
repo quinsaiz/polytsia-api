@@ -8,6 +8,7 @@ from sqlalchemy.pool import NullPool
 from src.config import settings
 from src.database import Base, get_db
 from src.main import app
+from src.redis import redis_pool
 
 test_engine = create_async_engine(settings.test_database_url, poolclass=NullPool)
 TestSessionFactory = async_sessionmaker(test_engine, expire_on_commit=False)
@@ -50,3 +51,9 @@ async def client(db: AsyncSession) -> AsyncGenerator[AsyncClient]:
         yield ac
 
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_redis_pool() -> AsyncGenerator[None]:
+    yield
+    await redis_pool.disconnect()

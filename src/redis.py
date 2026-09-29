@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from redis.asyncio import ConnectionPool, Redis
+from redis.exceptions import RedisError
 
 from src.config import settings
 
@@ -33,6 +34,13 @@ async def cache_set(key: str, value: Any, ttl_seconds: int) -> None:
         await redis.set(key, json.dumps(value), ex=ttl_seconds)
     except Exception as e:
         logger.warning("Cache set failed for key '%s': %s", key, e)
+
+
+async def cache_set_required(key: str, value: Any, ttl_seconds: int) -> None:
+    redis = get_redis_client()
+    written = await redis.set(key, json.dumps(value), ex=ttl_seconds)
+    if not written:
+        raise RedisError(f"Cache set failed for key '{key}'")
 
 
 async def cache_delete(key: str) -> None:

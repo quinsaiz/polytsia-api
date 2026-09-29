@@ -82,14 +82,12 @@ async def get_movie_details(
             f"{settings.tmdb_base_url}/movie/{tmdb_id}",
             headers=_tmdb_headers(),
         )
+        if response.status_code == 404:
+            raise MovieNotFoundException()
+        response.raise_for_status()
     except httpx.HTTPError as e:
         logger.error("TMDB movie detail request failed: %s", e)
         raise TMDBServiceUnavailableException() from e
-
-    if response.status_code == 404:
-        raise MovieNotFoundException()
-
-    response.raise_for_status()
 
     data = response.json()
     result = TMDBMovieSchema.model_validate(data)
