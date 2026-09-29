@@ -11,7 +11,7 @@ Built with FastAPI, SQLAlchemy 2, and Docker. Designed as a pet project but stru
 
 - **Movie tracking** — search TMDB, add movies to a personal library, set watch status, rating, tier, and notes
 - **Game tracking** — search RAWG, add games to a personal library, set play status, rating, tier, and notes
-- **Tier lists** — create named tier lists (S/A/B/C/D/F) for movies or games, add items, reorder within tiers
+- **Tier lists** — create named tier lists (S/A/B/C/D/F) for movies or games, add items, assign their tier and position
 - **External metadata** — proxied search and detail endpoints for TMDB (movies) and RAWG (games) with automatic Redis
   caching
 - **Authentication** — JWT access + refresh tokens with rotation, bcrypt password hashing, OAuth2-compatible login flow
@@ -150,7 +150,9 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | PATCH  | `/api/v1/auth/me`              | Update email or username             |
 | POST   | `/api/v1/auth/refresh`         | Rotate refresh token, get new pair   |
 | POST   | `/api/v1/auth/logout`          | Revoke refresh token                 |
-| POST   | `/api/v1/auth/change-password` | Change password, revoke all sessions |
+| POST   | `/api/v1/auth/change-password` | Change password, revoke refresh tokens |
+
+Changing a password deletes stored refresh tokens; already issued access tokens remain valid until they expire.
 
 For `PATCH /api/v1/auth/me`, omitted fields keep their current values. Explicit `null` for `email` or `username` returns 422.
 
@@ -205,6 +207,7 @@ For tracked movie and game PATCH requests, omitted fields keep their current val
 
 All tier list endpoints require authentication. Items reference tracked movies or games by ID.
 Tier list names may contain at most 100 characters.
+Setting an item's position does not shift other items automatically.
 
 ### Recommendations
 
@@ -268,16 +271,12 @@ prevent duplicates within a list.
 
 ## Running Tests
 
-Tests use a `polytsia_test` database name, per-test transaction rollback, and httpx `ASGITransport` for in-process
-API calls. The name alone does not isolate the PostgreSQL instance. Run tests only with a separate test PostgreSQL
-instance and Redis instance: older movie/game fixtures call Redis `FLUSHDB`. Recommendation tests replace the cache
-with an in-memory mapping except for the Redis pipeline tests, which require dedicated test services on
-`localhost:25432` (PostgreSQL) and `localhost:26379` (Redis), plus `POLYTSIA_TEST_ISOLATED_SERVICES=1`.
-
 ```bash
-# After starting isolated test services and setting test-only environment variables
-pytest tests/recommendations
+./scripts/test.sh
 ```
 
-The suite also contains authentication, movie/game tracking, and tier list tests; their Redis fixtures require the
-same isolation before running the full suite.
+This runs the full pytest suite in a separate Docker Compose project. PostgreSQL and Redis use temporary in-memory
+storage, have no published ports or shared volumes, and are removed when the command finishes, including on failure.
+The test container alone receives the test connection settings. Development data is untouched even though movie/game
+fixtures call Redis `FLUSHDB`. The command reports the full pytest result, exits 0 on success, and returns a nonzero
+status after cleanup on failure.

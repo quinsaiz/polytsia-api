@@ -1,0 +1,52 @@
+services:
+  test-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: polytsia_test
+      POSTGRES_PASSWORD: polytsia_test_only
+      POSTGRES_DB: polytsia_test
+    tmpfs:
+      - /var/lib/postgresql/data:rw,nosuid,size=256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polytsia_test -d polytsia_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks: [test-only]
+
+  test-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    tmpfs:
+      - /data:rw,nosuid,size=64m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks: [test-only]
+
+  tests:
+    build: .
+    command: ["pytest", "-q", "-p", "no:cacheprovider"]
+    environment:
+      SECRET_KEY: polytsia-isolated-tests-only
+      POSTGRES_USER: polytsia_test
+      POSTGRES_PASSWORD: polytsia_test_only
+      POSTGRES_HOST: test-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: polytsia
+      REDIS_HOST: test-redis
+      REDIS_PORT: 6379
+      POLYTSIA_TEST_ISOLATED_SERVICES: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      test-db:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    networks: [test-only]
+
+networks:
+  test-only:
+    internal: true
