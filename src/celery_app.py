@@ -8,6 +8,7 @@ celery_app = Celery("polytsia", broker=settings.celery_broker_url)
 celery_app.conf.update(
     timezone=settings.timezone,
     broker_connection_retry_on_startup=True,
+    beat_cron_starting_deadline=60,
 )
 celery_app.conf.beat_schedule = {
     "refresh-movie-candidates-daily": {

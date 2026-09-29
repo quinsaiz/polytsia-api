@@ -1,2 +1,6 @@
 .venv
 .git
+.env
+.env.*
+!.env.example
+celerybeat*

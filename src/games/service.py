@@ -31,6 +31,14 @@ from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def _log_rawg_http_error(action: str, error: httpx.HTTPError) -> None:
+    status = (
+        error.response.status_code if isinstance(error, httpx.HTTPStatusError) else None
+    )
+    logger.error("RAWG %s failed: %s, status=%s", action, type(error).__name__, status)
 
 
 def _rawg_headers() -> dict[str, str]:
@@ -63,8 +71,8 @@ async def search_games(
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG search request failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("search", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGSearchResultSchema.model_validate(data)
@@ -95,8 +103,8 @@ async def get_game_details(
             raise GameNotFoundException()
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG game detail failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("game detail", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGGameSchema.model_validate(data)
@@ -122,8 +130,8 @@ async def get_genres(http_client: httpx.AsyncClient) -> RAWGGenreListSchema:
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG genre list request failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("genre list", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGGenreListSchema.model_validate(data)
@@ -149,8 +157,8 @@ async def get_platforms(http_client: httpx.AsyncClient) -> RAWGPlatformListSchem
         )
         response.raise_for_status()
     except httpx.HTTPError as e:
-        logger.error("RAWG platform list request failed: %s", e)
-        raise RAWGServiceUnavailableException() from e
+        _log_rawg_http_error("platform list", e)
+        raise RAWGServiceUnavailableException() from None
 
     data = response.json()
     result = RAWGPlatformListSchema.model_validate(data)

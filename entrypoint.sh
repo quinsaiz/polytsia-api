@@ -25,7 +25,7 @@ elif [ "$1" = "celery_worker" ]; then
   exec celery -A src.celery_app worker --loglevel=info
 elif [ "$1" = "celery_beat" ]; then
   log "Starting Celery Beat..."
-  exec celery -A src.celery_app beat --loglevel=info
+  exec celery -A src.celery_app beat --loglevel=info --schedule=/tmp/polytsia-celerybeat-schedule
 elif [ "$1" = "bootstrap_recommendations" ]; then
   log "Queueing missing recommendation pools..."
   exec python -m src.recommendations.bootstrap

@@ -18,6 +18,7 @@ from src.recommendations.constants import (
 from src.redis import cache_set_required, redis_pool
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 DEFAULT_HEADERS = {
     "User-Agent": f"{settings.app_name}/1.0",
@@ -82,16 +83,26 @@ async def _fetch_game_candidates() -> list[dict[str, object]]:
         timeout=httpx.Timeout(30.0), headers={**DEFAULT_HEADERS}
     ) as client:
         for page in range(1, MAX_CANDIDATE_PAGES + 1):
-            response = await client.get(
-                f"{settings.rawg_base_url}/games",
-                params={
-                    "key": settings.rawg_api_key,
-                    "ordering": "-rating",
-                    "page_size": CANDIDATE_POOL_SIZE,
-                    "page": page,
-                },
-            )
-            response.raise_for_status()
+            try:
+                response = await client.get(
+                    f"{settings.rawg_base_url}/games",
+                    params={
+                        "key": settings.rawg_api_key,
+                        "ordering": "-rating",
+                        "page_size": CANDIDATE_POOL_SIZE,
+                        "page": page,
+                    },
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as error:
+                reason = (
+                    f"HTTP {error.response.status_code}"
+                    if isinstance(error, httpx.HTTPStatusError)
+                    else type(error).__name__
+                )
+                raise httpx.HTTPError(
+                    f"RAWG candidate request failed: {reason}"
+                ) from None
             payload = response.json()
             results = payload.get("results", [])
             if not results:
