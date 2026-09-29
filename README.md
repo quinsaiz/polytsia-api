@@ -177,6 +177,12 @@ Swagger and ReDoc are available only when `DEBUG=True`.
 | PATCH  | `/api/v1/games/{user_game_id}` | Required | Update status, rating, tier, notes  |
 | DELETE | `/api/v1/games/{user_game_id}` | Required | Remove game from library            |
 
+Game search accepts `query`, `page` (default 1), and `page_size` (default 10).
+Platforms accepts `page` (default 1). In both responses, `next` and `previous`
+are now relative URLs to these API routes, or `null` when RAWG reports no such
+page. Previously they were RAWG URLs, which could include the server's API key.
+Follow the returned URL on this API to keep the search query and page size.
+
 ### Tier Lists
 
 | Method | Endpoint                                           | Description                      |
