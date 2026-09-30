@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import logging
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from src.config import settings
 from src.recommendations.constants import CANDIDATE_POOL_SIZE, MAX_CANDIDATE_PAGES
 from src.recommendations.tasks import (
     _fetch_game_candidates,
@@ -13,6 +17,7 @@ from src.recommendations.tasks import (
     refresh_game_candidates,
     refresh_movie_candidates,
 )
+from src.upstream import InvalidUpstreamPayload
 
 if TYPE_CHECKING:
     from celery import Task
@@ -337,3 +342,173 @@ def test_redis_write_failure_retries_and_fails(
     )
     assert isinstance(result.result, RedisConnectionError)
     assert attempts == expected_attempts
+
+
+def _invalid_candidate_body(media, candidate, failure, secret_url):
+    candidate = dict(candidate)
+    raw_bodies = {
+        "json": f'{{"url":"{secret_url}",'.encode(),
+        "encoding": b"\xff",
+        "root": json.dumps([secret_url]).encode(),
+    }
+    if failure in raw_bodies:
+        return raw_bodies[failure]
+    name = "title" if media == "movies" else "name"
+    rating = "vote_average" if media == "movies" else "rating"
+    metadata = "total_pages" if media == "movies" else "next"
+    missing_fields = {
+        "missing_id": "id",
+        "missing_name": name,
+        "missing_rating": rating,
+    }
+    if failure in missing_fields:
+        del candidate[missing_fields[failure]]
+        payload = {"results": [candidate]}
+    else:
+        nested = (
+            {**candidate, "genre_ids": [{"url": secret_url}]}
+            if media == "movies"
+            else {
+                key: value for key, value in candidate.items() if key != "ratings_count"
+            }
+        )
+        payload = {
+            "missing_results": {},
+            "results_type": {"results": {"url": secret_url}},
+            "item_type": {"results": [secret_url]},
+            "rating_type": {"results": [{**candidate, rating: secret_url}]},
+            "nonfinite_rating": {"results": [{**candidate, rating: float("nan")}]},
+            "metadata": {"results": [candidate], metadata: {"url": secret_url}},
+            "nested": {"results": [nested]},
+        }[failure]
+    return json.dumps(payload).encode()
+
+
+@pytest.mark.parametrize(
+    ("task", "media", "candidate", "expected_attempts"),
+    [
+        (
+            refresh_movie_candidates,
+            "movies",
+            {"id": 101, "title": "Movie", "vote_average": 8.5},
+            4,
+        ),
+        (
+            refresh_game_candidates,
+            "games",
+            {"id": 201, "name": "Game", "rating": 4.5, "ratings_count": 700},
+            6,
+        ),
+    ],
+)
+@pytest.mark.parametrize("bad_page", [1, 2])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "json",
+        "encoding",
+        "root",
+        "missing_results",
+        "results_type",
+        "item_type",
+        "missing_id",
+        "missing_name",
+        "missing_rating",
+        "rating_type",
+        "nonfinite_rating",
+        "metadata",
+        "nested",
+    ],
+)
+def test_invalid_candidates_retry_preserves_previous_pool(
+    task, media, candidate, expected_attempts, bad_page, failure, monkeypatch, caplog
+):
+    sentinel = "rawg-candidate-payload-secret"
+    secret_url = f"https://api.rawg.io/api/games?key={sentinel}"
+    monkeypatch.setattr(settings, "rawg_api_key", sentinel)
+    body = _invalid_candidate_body(media, candidate, failure, secret_url)
+    requested_pages = []
+
+    def handler(request):
+        page = int(request.url.params["page"])
+        requested_pages.append(page)
+        if media == "games":
+            assert request.url.params["key"] == sentinel
+        if page == bad_page:
+            return httpx.Response(200, content=body)
+        return httpx.Response(
+            200, json={"results": [candidate], "total_pages": 2, "next": secret_url}
+        )
+
+    _patch_tasks_client(monkeypatch, httpx.MockTransport(handler))
+    # Exercise the real required-cache-write function; a replacement would also
+    # reset the old pool's TTL, so neither value nor expiry may be written.
+    previous = (
+        {"tmdb_id": 99, "title": "Previous movie", "rating": 8.0}
+        if media == "movies"
+        else {"rawg_id": 99, "name": "Previous game", "rating": 4.0}
+    )
+    old_pool = json.dumps([previous]).encode()
+    stored = {"value": old_pool, "ttl": 1234}
+
+    class PoolRedis:
+        async def set(self, key, value, ex):
+            stored.update(value=value, ttl=ex)
+
+    redis = PoolRedis()
+    redis.set = AsyncMock(wraps=redis.set)
+    monkeypatch.setattr("src.redis.get_redis_client", lambda: redis)
+    with caplog.at_level(logging.INFO):
+        result = task.apply(throw=False)
+    assert result.failed()
+    assert isinstance(result.result, InvalidUpstreamPayload)
+    assert requested_pages == list(range(1, bad_page + 1)) * expected_attempts
+    redis.set.assert_not_awaited()
+    assert stored == {"value": old_pool, "ttl": 1234}
+    assert "Refreshed" not in caplog.text
+    assert sentinel not in caplog.text + str(result.result)
+
+
+@pytest.mark.parametrize(
+    ("task", "candidate", "expected_id"),
+    [
+        (
+            refresh_movie_candidates,
+            {"id": 101, "title": "Movie", "vote_average": 8.5},
+            "tmdb_id",
+        ),
+        (
+            refresh_game_candidates,
+            {"id": 201, "name": "Game", "rating": 4.5, "ratings_count": 700},
+            "rawg_id",
+        ),
+    ],
+)
+def test_invalid_candidates_can_recover_on_retry(
+    task, candidate, expected_id, monkeypatch
+):
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, content=b"{")
+        return httpx.Response(200, json={"results": [candidate]})
+
+    _patch_tasks_client(monkeypatch, httpx.MockTransport(handler))
+    write = AsyncMock()
+    monkeypatch.setattr("src.recommendations.tasks.cache_set_required", write)
+    result = task.apply(throw=False)
+    assert result.successful()
+    assert calls == 2
+    write.assert_awaited_once()
+    assert write.call_args.args[1][0][expected_id] == candidate["id"]
+
+
+async def test_explicit_empty_rawg_results_are_valid(monkeypatch):
+    _patch_tasks_client(
+        monkeypatch,
+        httpx.MockTransport(lambda _: httpx.Response(200, json={"results": []})),
+    )
+    assert await _fetch_game_candidates() == []

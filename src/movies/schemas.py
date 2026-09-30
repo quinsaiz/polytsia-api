@@ -6,34 +6,41 @@ from pydantic import BaseModel, Field, model_validator
 from src.movies.constants import TierRank, WatchStatus
 
 
+class TMDBGenreSchema(BaseModel):
+    id: int
+    name: str
+
+
 class TMDBMovieSchema(BaseModel):
     id: int
     title: str
     overview: str
     release_date: str | None = None
     poster_path: str | None = None
-    vote_average: float
+    vote_average: float = Field(allow_inf_nan=False)
     genre_ids: list[int] = []
 
     @model_validator(mode="before")
     @classmethod
-    def extract_genre_ids(cls, data: dict[str, object]) -> dict[str, object]:
+    def extract_genre_ids(cls, data: object) -> object:
         """
         TMDB's /search/movie returns genre_ids: [28, 80].
         TMDB's /movie/{id} returns genres: [{"id": 28, "name": "Action"}].
         Normalize both into genre_ids so the schema works for both endpoints.
         """
-        genres = data.get("genres")
-        if "genre_ids" not in data and isinstance(genres, list):
-            data["genre_ids"] = [
-                genre["id"] for genre in genres if isinstance(genre, dict)
-            ]
+        if not isinstance(data, dict):
+            return data
+        if "genre_ids" not in data and "genres" in data:
+            genres = data["genres"]
+            if not isinstance(genres, list):
+                raise ValueError("Expected a genre list")
+            return {
+                **data,
+                "genre_ids": [
+                    TMDBGenreSchema.model_validate(genre).id for genre in genres
+                ],
+            }
         return data
-
-
-class TMDBGenreSchema(BaseModel):
-    id: int
-    name: str
 
 
 class TMDBGenreListSchema(BaseModel):

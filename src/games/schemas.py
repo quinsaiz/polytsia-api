@@ -26,7 +26,7 @@ class RAWGGameSchema(BaseModel):
     description_raw: str = ""
     released: str | None = None
     background_image: str | None = None
-    rating: float
+    rating: float = Field(allow_inf_nan=False)
     genres: list[RAWGGenreSchema] = []
     platforms: list[RAWGPlatformWrapperSchema] = []
 
@@ -35,7 +35,7 @@ class RAWGSearchResultSchema(BaseModel):
     count: int
     next: str | None = None
     previous: str | None = None
-    results: list[RAWGGameSchema] = []
+    results: list[RAWGGameSchema]
 
 
 class RAWGGenreListSchema(BaseModel):

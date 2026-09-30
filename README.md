@@ -127,7 +127,8 @@ Services started:
 | REST API       | <http://localhost:8000/api/v1/> |
 | Swagger UI     | <http://localhost:8000/docs>    |
 | ReDoc          | <http://localhost:8000/redoc>   |
-| Health check   | <http://localhost:8000/health>  |
+| Liveness       | <http://localhost:8000/health>  |
+| Readiness      | <http://localhost:8000/ready>   |
 | PostgreSQL     | localhost:15432                 |
 | Redis          | localhost:16379                 |
 | Celery worker  | Background candidate refresh    |
@@ -135,6 +136,17 @@ Services started:
 | Bootstrap job  | Queues missing pools at startup |
 
 Swagger and ReDoc are available only when `DEBUG=True`.
+
+`GET /health` is a cheap liveness check: it returns HTTP 200 with `{"status":"ok"}` without checking dependencies.
+`GET /ready` checks PostgreSQL with `SELECT 1` and a one-second timeout covering connection acquisition and the query.
+It returns HTTP 200 with `{"status":"ready"}`, or HTTP 503 with `{"detail":"Database is unavailable"}` if the check
+fails or times out. Readiness does not check Redis or external catalogs.
+
+FastAPI requires PostgreSQL at startup for migrations, but does not wait for Redis. `docker compose up --build backend`
+starts the API and its database without starting Redis. During a Redis outage, database-backed routes continue to work;
+catalog cache reads become misses and failed cache writes are ignored, so catalog requests use TMDB/RAWG directly.
+Recommendations return HTTP 200 with empty lists and unavailable-pool flags. Celery worker, beat, and the recommendation
+bootstrap still require Redis; candidate refreshes cannot run while the broker is unavailable.
 
 ---
 

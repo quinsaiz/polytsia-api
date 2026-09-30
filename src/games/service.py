@@ -33,6 +33,7 @@ from src.games.schemas import (
 )
 from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
+from src.upstream import InvalidUpstreamPayload, parse_upstream
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -120,12 +121,14 @@ async def search_games(
             },
         )
         response.raise_for_status()
+        result = parse_upstream(response, RAWGSearchResultSchema)
+    except InvalidUpstreamPayload:
+        raise RAWGServiceUnavailableException() from None
     except httpx.HTTPError as e:
         _log_rawg_http_error("search", e)
         raise RAWGServiceUnavailableException() from None
 
-    data = response.json()
-    result = _safe_search_result(data, query, page, page_size)
+    result = _safe_search_result(result, query, page, page_size)
 
     await cache_set(cache_key, result.model_dump(mode="json"), SEARCH_CACHE_TTL)
 
@@ -152,14 +155,14 @@ async def get_game_details(
         if response.status_code == 404:
             raise GameNotFoundException()
         response.raise_for_status()
+        result = parse_upstream(response, RAWGGameSchema)
+    except InvalidUpstreamPayload:
+        raise RAWGServiceUnavailableException() from None
     except httpx.HTTPError as e:
         _log_rawg_http_error("game detail", e)
         raise RAWGServiceUnavailableException() from None
 
-    data = response.json()
-    result = RAWGGameSchema.model_validate(data)
-
-    await cache_set(cache_key, data, GAME_DETAIL_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), GAME_DETAIL_CACHE_TTL)
 
     return result
 
@@ -179,14 +182,14 @@ async def get_genres(http_client: httpx.AsyncClient) -> RAWGGenreListSchema:
             params={"key": settings.rawg_api_key},
         )
         response.raise_for_status()
+        result = parse_upstream(response, RAWGGenreListSchema)
+    except InvalidUpstreamPayload:
+        raise RAWGServiceUnavailableException() from None
     except httpx.HTTPError as e:
         _log_rawg_http_error("genre list", e)
         raise RAWGServiceUnavailableException() from None
 
-    data = response.json()
-    result = RAWGGenreListSchema.model_validate(data)
-
-    await cache_set(cache_key, data, GENRES_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), GENRES_CACHE_TTL)
 
     return result
 
@@ -208,12 +211,14 @@ async def get_platforms(
             params={"key": settings.rawg_api_key, "page": page},
         )
         response.raise_for_status()
+        result = parse_upstream(response, RAWGPlatformListSchema)
+    except InvalidUpstreamPayload:
+        raise RAWGServiceUnavailableException() from None
     except httpx.HTTPError as e:
         _log_rawg_http_error("platform list", e)
         raise RAWGServiceUnavailableException() from None
 
-    data = response.json()
-    result = _safe_platform_list(data, page)
+    result = _safe_platform_list(result, page)
 
     await cache_set(cache_key, result.model_dump(mode="json"), PLATFORMS_CACHE_TTL)
 

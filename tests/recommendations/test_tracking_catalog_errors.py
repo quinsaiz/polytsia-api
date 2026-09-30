@@ -106,3 +106,41 @@ async def test_track_catalog_404_remains_not_found(
                 assert response.json() == {"detail": error_detail}
         finally:
             app.dependency_overrides.pop(get_http_client, None)
+
+
+@pytest.mark.parametrize(
+    ("media", "id_field"), [("movies", "tmdb_id"), ("games", "rawg_id")]
+)
+@pytest.mark.parametrize("body", [b"{", b"[]", b"null", b"{}", b'{"id": 987654321}'])
+async def test_track_invalid_details_does_not_create_record(
+    media, id_field, body, auth_headers, client, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(f"src.{media}.service.cache_get", AsyncMock(return_value=None))
+    cache_set = AsyncMock()
+    monkeypatch.setattr(f"src.{media}.service.cache_set", cache_set)
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, content=body))
+    async with httpx.AsyncClient(transport=transport) as upstream:
+        app.dependency_overrides[get_http_client] = lambda: upstream
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+            ) as api:
+                response = await api.post(
+                    f"/api/v1/{media}/track",
+                    json={id_field: 987654321},
+                    headers=auth_headers,
+                )
+                assert response.status_code == 503
+                label = "Movie" if media == "movies" else "Game"
+                assert response.json() == {
+                    "detail": f"{label} database service is temporarily unavailable"
+                }
+                tracked = await api.get(f"/api/v1/{media}/", headers=auth_headers)
+                assert tracked.status_code == 200
+                assert tracked.json()["total"] == 0
+                cache_set.assert_not_awaited()
+        finally:
+            app.dependency_overrides.pop(get_http_client, None)
