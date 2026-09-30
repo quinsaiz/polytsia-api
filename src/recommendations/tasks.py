@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import httpx
+from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
 
 from src.celery_app import celery_app
@@ -15,7 +16,9 @@ from src.recommendations.constants import (
     MIN_VOTE_COUNT_TMDB,
     MOVIE_CANDIDATES_CACHE_KEY,
 )
+from src.recommendations.schemas import RecommendedGameSchema, RecommendedMovieSchema
 from src.redis import cache_set_required, redis_pool
+from src.upstream import InvalidUpstreamPayload, parse_upstream
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -23,6 +26,27 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 DEFAULT_HEADERS = {
     "User-Agent": f"{settings.app_name}/1.0",
 }
+
+
+class _MovieCandidate(RecommendedMovieSchema):
+    tmdb_id: int = Field(alias="id")
+    rating: float = Field(alias="vote_average", allow_inf_nan=False)
+
+
+class _MoviePage(BaseModel):
+    results: list[_MovieCandidate]
+    total_pages: int = Field(default=1, ge=0)
+
+
+class _GameCandidate(RecommendedGameSchema):
+    rawg_id: int = Field(alias="id")
+    rating: float = Field(allow_inf_nan=False)
+    ratings_count: int = Field(exclude=True, ge=0)
+
+
+class _GamePage(BaseModel):
+    results: list[_GameCandidate]
+    next: str | None = None
 
 
 async def _fetch_movie_candidates() -> list[dict[str, object]]:
@@ -45,32 +69,23 @@ async def _fetch_movie_candidates() -> list[dict[str, object]]:
                 },
             )
             response.raise_for_status()
-            payload = response.json()
-            results = payload.get("results", [])
+            payload = parse_upstream(response, _MoviePage)
+            results = payload.results
             if not results:
                 break
 
             new_ids = False
             for movie in results:
-                movie_id = movie["id"]
+                movie_id = movie.tmdb_id
                 if movie_id in seen_ids:
                     continue
                 seen_ids.add(movie_id)
                 new_ids = True
-                candidates.append(
-                    {
-                        "tmdb_id": movie_id,
-                        "title": movie["title"],
-                        "rating": movie["vote_average"],
-                        "overview": movie.get("overview", ""),
-                        "genre_ids": movie.get("genre_ids", []),
-                        "poster_path": movie.get("poster_path"),
-                    }
-                )
+                candidates.append(movie.model_dump())
                 if len(candidates) == CANDIDATE_POOL_SIZE:
                     return candidates
 
-            if not new_ids or page >= payload.get("total_pages", page):
+            if not new_ids or page >= payload.total_pages:
                 break
 
     return candidates
@@ -103,32 +118,25 @@ async def _fetch_game_candidates() -> list[dict[str, object]]:
                 raise httpx.HTTPError(
                     f"RAWG candidate request failed: {reason}"
                 ) from None
-            payload = response.json()
-            results = payload.get("results", [])
+            payload = parse_upstream(response, _GamePage)
+            results = payload.results
             if not results:
                 break
 
             new_ids = False
             for game in results:
-                game_id = game["id"]
+                game_id = game.rawg_id
                 if game_id in seen_ids:
                     continue
                 seen_ids.add(game_id)
                 new_ids = True
-                if game.get("ratings_count", 0) < MIN_RATINGS_COUNT_RAWG:
+                if game.ratings_count < MIN_RATINGS_COUNT_RAWG:
                     continue
-                candidates.append(
-                    {
-                        "rawg_id": game_id,
-                        "name": game["name"],
-                        "rating": game["rating"],
-                        "background_image": game.get("background_image"),
-                    }
-                )
+                candidates.append(game.model_dump())
                 if len(candidates) == CANDIDATE_POOL_SIZE:
                     return candidates
 
-            if not new_ids or not payload.get("next"):
+            if not new_ids or not payload.next:
                 break
 
     return candidates
@@ -158,7 +166,7 @@ async def _refresh_games_pipeline() -> None:
 
 @celery_app.task(
     name="src.recommendations.tasks.refresh_movie_candidates",
-    autoretry_for=(httpx.HTTPError, RedisError),
+    autoretry_for=(httpx.HTTPError, RedisError, InvalidUpstreamPayload),
     retry_kwargs={"max_retries": 3},
     retry_backoff=True,
     retry_backoff_max=60,
@@ -169,7 +177,7 @@ def refresh_movie_candidates() -> None:
 
 @celery_app.task(
     name="src.recommendations.tasks.refresh_game_candidates",
-    autoretry_for=(httpx.HTTPError, RedisError),
+    autoretry_for=(httpx.HTTPError, RedisError, InvalidUpstreamPayload),
     retry_kwargs={"max_retries": 5},
     retry_backoff=True,
     retry_backoff_max=120,

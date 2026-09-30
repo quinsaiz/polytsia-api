@@ -29,6 +29,7 @@ from src.movies.schemas import (
 )
 from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
+from src.upstream import InvalidUpstreamPayload, parse_upstream
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +57,14 @@ async def search_movies(
             params={"query": query, "page": page},
         )
         response.raise_for_status()
+        result = parse_upstream(response, TMDBSearchResultSchema)
+    except InvalidUpstreamPayload:
+        raise TMDBServiceUnavailableException() from None
     except httpx.HTTPError as e:
         logger.error("TMDB search request failed: %s", e)
         raise TMDBServiceUnavailableException() from e
 
-    data = response.json()
-    result = TMDBSearchResultSchema.model_validate(data)
-
-    await cache_set(cache_key, data, SEARCH_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), SEARCH_CACHE_TTL)
 
     return result
 
@@ -87,14 +88,14 @@ async def get_movie_details(
         if response.status_code == 404:
             raise MovieNotFoundException()
         response.raise_for_status()
+        result = parse_upstream(response, TMDBMovieSchema)
+    except InvalidUpstreamPayload:
+        raise TMDBServiceUnavailableException() from None
     except httpx.HTTPError as e:
         logger.error("TMDB movie detail request failed: %s", e)
         raise TMDBServiceUnavailableException() from e
 
-    data = response.json()
-    result = TMDBMovieSchema.model_validate(data)
-
-    await cache_set(cache_key, data, MOVIE_DETAIL_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), MOVIE_DETAIL_CACHE_TTL)
 
     return result
 
@@ -113,14 +114,14 @@ async def get_genres(http_client: httpx.AsyncClient) -> TMDBGenreListSchema:
             headers=_tmdb_headers(),
         )
         response.raise_for_status()
+        result = parse_upstream(response, TMDBGenreListSchema)
+    except InvalidUpstreamPayload:
+        raise TMDBServiceUnavailableException() from None
     except httpx.HTTPError as e:
         logger.error("TMDB genres request failed: %s", e)
         raise TMDBServiceUnavailableException() from e
 
-    data = response.json()
-    result = TMDBGenreListSchema.model_validate(data)
-
-    await cache_set(cache_key, data, GENRES_CACHE_TTL)
+    await cache_set(cache_key, result.model_dump(mode="json"), GENRES_CACHE_TTL)
 
     return result
 
