@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import logging.config
 from collections.abc import AsyncGenerator
@@ -5,11 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from src.auth.router import router as auth_router
 from src.config import settings
+from src.database import engine
 from src.games.router import router as games_router
 from src.movies.router import router as movies_router
 from src.recommendations.router import router as recommendations_router
@@ -18,6 +21,7 @@ from src.tierlists.router import router as tierlists_router
 logger = logging.getLogger(__name__)
 
 _LOG_CONFIG = Path("logging.ini")
+READINESS_TIMEOUT_SECONDS = 1.0
 
 
 def _setup_logging() -> None:
@@ -74,3 +78,22 @@ app.include_router(tierlists_router, prefix="/api/v1")
 @app.get("/health", tags=["System"])
 async def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get(
+    "/ready", tags=["System"], responses={503: {"description": "Database unavailable"}}
+)
+async def readiness_check() -> dict[str, str]:
+    try:
+        # Bound connection acquisition and the query, including pool exhaustion.
+        async with asyncio.timeout(READINESS_TIMEOUT_SECONDS):
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+    except Exception as error:
+        # Driver errors may contain connection details; expose only a fixed message.
+        logger.warning("Readiness database check failed: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is unavailable",
+        ) from None
+    return {"status": "ready"}

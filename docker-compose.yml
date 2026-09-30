@@ -9,10 +9,9 @@ services:
       - .:/app
       - /app/.venv
     environment:
-      RELOAD: "true"
+      RELOAD: "${RELOAD:-true}"
     depends_on:
       - db
-      - redis
 
   db:
     image: postgres:17-alpine

@@ -10,16 +10,22 @@ prepare_app() {
 }
 
 wait-for-it --service "${POSTGRES_HOST}:${POSTGRES_PORT}" -- echo "[entrypoint] PostgreSQL is up"
-wait-for-it --service "${REDIS_HOST}:${REDIS_PORT}" -- echo "[entrypoint] Redis is up"
+if [ "$1" != "backend" ]; then
+  wait-for-it --service "${REDIS_HOST}:${REDIS_PORT}" -- echo "[entrypoint] Redis is up"
+fi
 
 if [ "$1" = "backend" ]; then
   prepare_app
   log "Starting Uvicorn..."
+  reload_args=()
+  if [ "${RELOAD:-false}" = "true" ]; then
+    reload_args+=(--reload)
+  fi
 
   exec uvicorn src.main:app \
     --host 0.0.0.0 \
     --port 8000 \
-    ${RELOAD:+--reload}
+    "${reload_args[@]}"
 elif [ "$1" = "celery_worker" ]; then
   log "Starting Celery Worker..."
   exec celery -A src.celery_app worker --loglevel=info
