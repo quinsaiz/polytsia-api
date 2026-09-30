@@ -18,6 +18,8 @@ from src.movies.service import (
     delete_user_movie,
     get_genres,
     get_movie_details,
+    get_user_movie_by_catalog_or_404,
+    get_user_movie_or_404,
     get_user_movies,
     search_movies,
     track_movie,
@@ -40,6 +42,26 @@ async def search(
 @router.get("/genres", response_model=TMDBGenreListSchema)
 async def list_genres(http_client: HttpClientDep) -> TMDBGenreListSchema:
     return await get_genres(http_client=http_client)
+
+
+@router.get("/tracked/by-catalog/{tmdb_id}", response_model=UserMovieResponseSchema)
+async def get_my_movie_by_catalog(
+    tmdb_id: int,
+    current_user: CurrentUserDep,
+    db: DbSessionDep,
+) -> UserMovieResponseSchema:
+    record = await get_user_movie_by_catalog_or_404(current_user.id, tmdb_id, db)
+    return UserMovieResponseSchema.model_validate(record)
+
+
+@router.get("/tracked/{user_movie_id}", response_model=UserMovieResponseSchema)
+async def get_my_movie(
+    user_movie_id: uuid.UUID,
+    current_user: CurrentUserDep,
+    db: DbSessionDep,
+) -> UserMovieResponseSchema:
+    record = await get_user_movie_or_404(current_user.id, user_movie_id, db)
+    return UserMovieResponseSchema.model_validate(record)
 
 
 @router.get("/{tmdb_id}", response_model=TMDBMovieSchema)

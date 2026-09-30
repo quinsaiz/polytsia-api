@@ -177,6 +177,8 @@ For `PATCH /api/v1/auth/me`, omitted fields keep their current values. Explicit 
 | GET    | `/api/v1/movies/{tmdb_id}`       | No       | Get movie details from TMDB (cached) |
 | POST   | `/api/v1/movies/track`           | Required | Add movie to personal library        |
 | GET    | `/api/v1/movies/`                | Required | List tracked movies (paginated)      |
+| GET    | `/api/v1/movies/tracked/{user_movie_id}` | Required | Read own card by internal UUID |
+| GET    | `/api/v1/movies/tracked/by-catalog/{tmdb_id}` | Required | Find own card by TMDB ID |
 | PATCH  | `/api/v1/movies/{user_movie_id}` | Required | Update status, rating, tier, notes   |
 | DELETE | `/api/v1/movies/{user_movie_id}` | Required | Remove movie from library            |
 
@@ -192,6 +194,8 @@ Movie search accepts `query` and `page` (default 1, range 1–500).
 | GET    | `/api/v1/games/{rawg_id}`      | No       | Get game details from RAWG (cached) |
 | POST   | `/api/v1/games/track`          | Required | Add game to personal library        |
 | GET    | `/api/v1/games/`               | Required | List tracked games (paginated)      |
+| GET    | `/api/v1/games/tracked/{user_game_id}` | Required | Read own card by internal UUID |
+| GET    | `/api/v1/games/tracked/by-catalog/{rawg_id}` | Required | Find own card by RAWG ID |
 | PATCH  | `/api/v1/games/{user_game_id}` | Required | Update status, rating, tier, notes  |
 | DELETE | `/api/v1/games/{user_game_id}` | Required | Remove game from library            |
 
@@ -204,6 +208,81 @@ Follow the returned URL on this API to keep the search query and page size.
 
 For tracked movie and game PATCH requests, omitted fields keep their current values. Explicit `null` clears
 `personal_rating`, `tier`, or `notes`; `status: null` returns 422. Notes may contain at most 1,000 characters.
+
+### Personal library cards
+
+Tracking POST, personal PATCH, paginated list items, and both personal GET routes return the same card.
+Existing fields and pagination (`items`, `total`, `page`, `page_size`, `total_pages`) are unchanged.
+The following read-only fields are added alongside personal status, rating, tier and notes:
+
+| Field | Movies | Games |
+|-------|--------|-------|
+| `catalog_title` | TMDB `title` | RAWG `name` |
+| `catalog_poster_path` | TMDB image path, e.g. `/poster.jpg`; not a full URL | Not present |
+| `catalog_background_image` | Not present | RAWG image URL, e.g. `https://…/image.jpg` |
+| `catalog_release_date` | Parsed TMDB `release_date` | Parsed RAWG `released` |
+| `catalog_metadata_fetched_at` | UTC time the snapshot was captured | UTC time the snapshot was captured |
+
+Dates are JSON `YYYY-MM-DD` or `null`. Current catalog schemas accept date strings without validating their
+calendar meaning; missing/null, empty, malformed or impossible date strings become `null` in the snapshot.
+Other invalid field types still follow the existing upstream validation contract (503, no tracked record).
+Titles remain required strings in both catalog schemas; no new translation, locale selection or nonempty-title
+validation is introduced. Values use the language returned by the existing integrations, which send no locale.
+Missing/null images are stored as `null`. Images remain remote references, not downloaded assets.
+
+A new record captures this snapshot from the already validated detail response (possibly cached), atomically
+with tracking and its `external_rating`. The timestamp records capture time, not the catalog's last update time.
+Personal PATCH cannot edit snapshot fields; unknown request fields continue to be ignored. The snapshot does
+not affect recommendation thresholds and is separate from the catalog rating captured at tracking time.
+
+Old records have nullable snapshot fields until backfilled. A null `catalog_metadata_fetched_at` means no complete
+snapshot has been captured; clients can display the external ID as a fallback. A captured snapshot may legitimately
+have a null image/date. List and personal GET routes use only PostgreSQL, including in this mixed state; they
+do not acquire an external HTTP client or use Redis. Both lookups are scoped to the current user and return the
+same existing `404` (`Movie not found` / `Game not found`) for missing and foreign records. Public catalog GET
+routes still use integer catalog IDs and retain their existing responses.
+
+### Backfill existing library snapshots
+
+Apply `alembic upgrade head` before deploying the new application code. The nullable migration performs no
+external requests and preserves existing records. Backfill is an explicit operator action; it never runs in
+requests, migrations or automatically at startup. Run one process at a time against the intended database,
+with its normal environment configuration and catalog credentials. Redis and Celery are not needed.
+
+```bash
+uv run python -m src.backfill_catalog_snapshots --media movies --batch-size 100 --max-requests 1000 --delay 1
+uv run python -m src.backfill_catalog_snapshots --media games --batch-size 100 --max-requests 1000 --delay 1
+```
+
+For an already running Compose backend containing this code, use `docker compose exec backend python -m
+src.backfill_catalog_snapshots --media movies --batch-size 100 --max-requests 1000 --delay 1` (and then `games`).
+Choose limits/delay for your catalog quota; the defaults are local controls, not a guarantee of provider quotas.
+Batch size is 1–1000 rows; requests are sequential, have a 10-second HTTP timeout and no automatic retry.
+The request limit applies per invocation. Rows are traversed by UUID with bounded memory, without holding a
+database transaction open during HTTP. New tracked records already have snapshots; rerun to cover any legacy
+rows inserted during a run.
+
+Rows with both title and capture timestamp are skipped even when optional image/date is null. A missing title
+or timestamp means a partial snapshot: all snapshot fields are replaced together after a successful fetch.
+Only snapshot fields are updated; personal fields, `external_rating`, `created_at` and `updated_at` are preserved.
+A row deleted or completed during fetching is skipped. Catalog failures leave the row unchanged and other rows
+proceed. A database read/write or connection failure stops the run; an unconfirmed commit is not counted as filled.
+
+The final JSON reports `filled`, `skipped`, `failed`, `not_found` (catalog 404), `unavailable` (429/5xx/timeout/invalid
+payload mapped by the existing catalog service to 503), `database_errors`, `requests`, `complete_scan`, and
+`next_after_id`. Failures are counted within `failed`, not as successful skips. Exit code is 0 for a completed
+scan without failures, 1 if any failure occurred, and 2 for a request-limited scan without failures. A database
+read/write or connection failure aborts with a partial summary and exit 1. Logs omit credentials, payloads and personal notes.
+
+To resume, pass `--after-id UUID` using `next_after_id` from that media's summary; if it is null, omit `--after-id`.
+The cursor advances only through confirmed successful or skipped rows before the first failure. Even if later
+rows succeed, it stays before that failure so resuming cannot omit it. A failure before processing any row preserves
+the supplied cursor (or null). `complete_scan` describes traversal, not success: catalog failures can coexist with
+a completed scan and exit 1. Successful rows are skipped on every rerun, including a write whose commit succeeded
+but whose acknowledgement was lost. You may also rerun without `--after-id` to revisit all incomplete snapshots.
+A catalog 404 is attempted only once per invocation, is reported separately, and remains eligible for an explicit
+later run; there is no retry loop or permanent deletion marker. During a broad outage stop and retry later rather
+than repeatedly spending the request budget. Backfill has not implicitly been run on any deployed database.
 
 ### Tier Lists
 
