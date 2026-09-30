@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    case,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -40,7 +41,15 @@ class TierList(Base):
     items: Mapped[list["TierListItem"]] = relationship(
         back_populates="tier_list",
         cascade="all, delete-orphan",
-        order_by="TierListItem.position",
+        order_by=lambda: (
+            case(
+                {"S": 0, "A": 1, "B": 2, "C": 3, "D": 4, "F": 5},
+                value=TierListItem.tier,
+                else_=6,
+            ),
+            TierListItem.position,
+            TierListItem.id,
+        ),
     )
 
     def __repr__(self) -> str:
@@ -52,6 +61,15 @@ class TierListItem(Base):
     __table_args__ = (
         UniqueConstraint("tier_list_id", "user_movie_id", name="uq_tierlist_movie"),
         UniqueConstraint("tier_list_id", "user_game_id", name="uq_tierlist_game"),
+        UniqueConstraint(
+            "tier_list_id",
+            "tier",
+            "position",
+            name="uq_tierlist_tier_position",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint("position >= 0", name="ck_tier_item_position_nonnegative"),
         CheckConstraint(
             "(user_movie_id IS NOT NULL AND user_game_id IS NULL) OR "
             "(user_movie_id IS NULL AND user_game_id IS NOT NULL)",

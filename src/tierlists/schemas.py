@@ -15,7 +15,7 @@ class AddTierListItemSchema(BaseModel):
     user_movie_id: uuid.UUID | None = None
     user_game_id: uuid.UUID | None = None
     tier: TierRank = TierRank.C
-    position: int = 0
+    position: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def exactly_one_ref(self) -> "AddTierListItemSchema":
@@ -26,7 +26,7 @@ class AddTierListItemSchema(BaseModel):
 
 class MoveTierListItemSchema(BaseModel):
     tier: TierRank
-    position: int
+    position: int | None = Field(default=None, ge=0)
 
 
 class TierListItemResponseSchema(BaseModel):

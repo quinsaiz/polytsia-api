@@ -31,3 +31,11 @@ class ItemAlreadyInTierListException(HTTPException):
             status_code=status.HTTP_409_CONFLICT,
             detail="This item is already in the tier list",
         )
+
+
+class TierPositionOutOfRangeException(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Position out of range for tier",
+        )
