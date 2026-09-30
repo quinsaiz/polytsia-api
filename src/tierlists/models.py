@@ -15,6 +15,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
+from src.games.models import UserGame
+from src.movies.models import UserMovie
 
 
 class TierList(Base):
@@ -99,6 +101,30 @@ class TierListItem(Base):
     position: Mapped[int] = mapped_column(Integer, default=0)
 
     tier_list: Mapped[TierList] = relationship(back_populates="items")
+    movie: Mapped[UserMovie | None] = relationship(lazy="raise")
+    game: Mapped[UserGame | None] = relationship(lazy="raise")
+
+    @property
+    def summary(self) -> dict[str, object]:
+        tracked = self.movie if self.user_movie_id is not None else self.game
+        assert tracked is not None
+        return {
+            "media_type": "movie" if self.user_movie_id is not None else "game",
+            "tracked_id": tracked.id,
+            "catalog_id": tracked.tmdb_id
+            if isinstance(tracked, UserMovie)
+            else tracked.rawg_id,
+            "catalog_title": tracked.catalog_title,
+            "catalog_poster_path": tracked.catalog_poster_path
+            if isinstance(tracked, UserMovie)
+            else None,
+            "catalog_background_image": tracked.catalog_background_image
+            if isinstance(tracked, UserGame)
+            else None,
+            "catalog_release_date": tracked.catalog_release_date,
+            "catalog_metadata_fetched_at": tracked.catalog_metadata_fetched_at,
+            "external_rating": tracked.external_rating,
+        }
 
     def __repr__(self) -> str:
         return f"TierListItem(id={self.id}, tier={self.tier}, position={self.position})"

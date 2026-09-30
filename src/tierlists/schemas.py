@@ -1,13 +1,21 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.tierlists.constants import MediaType, TierRank
 
 
-class CreateTierListSchema(BaseModel):
-    name: str = Field(max_length=100)
+class RenameTierListSchema(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class CreateTierListSchema(RenameTierListSchema):
     media_type: MediaType
 
 
@@ -29,6 +37,18 @@ class MoveTierListItemSchema(BaseModel):
     position: int | None = Field(default=None, ge=0)
 
 
+class TierListItemSummarySchema(BaseModel):
+    media_type: MediaType
+    tracked_id: uuid.UUID
+    catalog_id: int
+    catalog_title: str | None
+    catalog_poster_path: str | None
+    catalog_background_image: str | None
+    catalog_release_date: date | None
+    catalog_metadata_fetched_at: datetime | None
+    external_rating: float | None
+
+
 class TierListItemResponseSchema(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -37,6 +57,7 @@ class TierListItemResponseSchema(BaseModel):
     user_game_id: uuid.UUID | None
     tier: TierRank
     position: int
+    summary: TierListItemSummarySchema
 
 
 class TierListResponseSchema(BaseModel):

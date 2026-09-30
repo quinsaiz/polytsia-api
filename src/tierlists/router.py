@@ -8,6 +8,7 @@ from src.tierlists.schemas import (
     AddTierListItemSchema,
     CreateTierListSchema,
     MoveTierListItemSchema,
+    RenameTierListSchema,
     TierListItemResponseSchema,
     TierListResponseSchema,
 )
@@ -19,6 +20,7 @@ from src.tierlists.service import (
     get_tier_list_or_404,
     get_user_tier_lists,
     move_item,
+    rename_tier_list,
 )
 
 router = APIRouter(prefix="/tierlists", tags=["tierlists"])
@@ -127,3 +129,14 @@ async def remove(
         user_id=current_user.id,
         db=db,
     )
+
+
+@router.patch("/{tier_list_id}", response_model=TierListResponseSchema)
+async def rename(
+    tier_list_id: uuid.UUID,
+    data: RenameTierListSchema,
+    current_user: CurrentUserDep,
+    db: DbSessionDep,
+) -> TierListResponseSchema:
+    tier_list = await rename_tier_list(current_user.id, tier_list_id, data, db)
+    return TierListResponseSchema.model_validate(tier_list)

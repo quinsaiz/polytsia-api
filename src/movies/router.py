@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, status
 from src.auth.dependencies import CurrentUserDep
 from src.database import DbSessionDep
 from src.dependencies import HttpClientDep
+from src.library_query import MovieLibraryQuery
 from src.movies.schemas import (
     TMDBGenreListSchema,
     TMDBMovieSchema,
@@ -94,8 +95,11 @@ async def list_my_movies(
     current_user: CurrentUserDep,
     db: DbSessionDep,
     pagination: PaginationDep,
+    filters: Annotated[MovieLibraryQuery, Query()],
 ) -> PaginatedResponse[UserMovieResponseSchema]:
-    return await get_user_movies(user_id=current_user.id, db=db, pagination=pagination)
+    return await get_user_movies(
+        user_id=current_user.id, db=db, pagination=pagination, filters=filters
+    )
 
 
 @router.patch("/{user_movie_id}", response_model=UserMovieResponseSchema)

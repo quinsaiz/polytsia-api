@@ -32,6 +32,7 @@ from src.games.schemas import (
     UpdateUserGameSchema,
     UserGameResponseSchema,
 )
+from src.library_query import GameLibraryQuery, library_statement
 from src.pagination import PaginatedResponse, PaginationParams
 from src.redis import cache_get, cache_set
 from src.upstream import InvalidUpstreamPayload, parse_upstream
@@ -274,19 +275,12 @@ async def get_user_games(
     user_id: uuid.UUID,
     pagination: PaginationParams,
     db: AsyncSession,
+    filters: GameLibraryQuery | None = None,
 ) -> PaginatedResponse[UserGameResponseSchema]:
-    count_stmt = (
-        select(func.count()).select_from(UserGame).where(UserGame.user_id == user_id)
-    )
+    filtered = library_statement(UserGame, user_id, filters or GameLibraryQuery())
+    count_stmt = select(func.count()).select_from(filtered.order_by(None).subquery())
     total = (await db.execute(count_stmt)).scalar_one()
-
-    stmt = (
-        select(UserGame)
-        .where(UserGame.user_id == user_id)
-        .order_by(UserGame.created_at.desc())
-        .offset(pagination.offset)
-        .limit(pagination.limit)
-    )
+    stmt = filtered.offset(pagination.offset).limit(pagination.limit)
     result = await db.execute(stmt)
     items = [UserGameResponseSchema.model_validate(m) for m in result.scalars().all()]
 

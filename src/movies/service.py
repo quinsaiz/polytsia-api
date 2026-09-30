@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.catalog_snapshot import catalog_snapshot
 from src.config import settings
 from src.database import is_unique_constraint_violation
+from src.library_query import MovieLibraryQuery, library_statement
 from src.movies.constants import (
     GENRES_CACHE_TTL,
     MOVIE_DETAIL_CACHE_TTL,
@@ -181,19 +182,12 @@ async def get_user_movies(
     user_id: uuid.UUID,
     pagination: PaginationParams,
     db: AsyncSession,
+    filters: MovieLibraryQuery | None = None,
 ) -> PaginatedResponse[UserMovieResponseSchema]:
-    count_stmt = (
-        select(func.count()).select_from(UserMovie).where(UserMovie.user_id == user_id)
-    )
+    filtered = library_statement(UserMovie, user_id, filters or MovieLibraryQuery())
+    count_stmt = select(func.count()).select_from(filtered.order_by(None).subquery())
     total = (await db.execute(count_stmt)).scalar_one()
-
-    stmt = (
-        select(UserMovie)
-        .where(UserMovie.user_id == user_id)
-        .order_by(UserMovie.created_at.desc())
-        .offset(pagination.offset)
-        .limit(pagination.limit)
-    )
+    stmt = filtered.offset(pagination.offset).limit(pagination.limit)
     result = await db.execute(stmt)
     items = [UserMovieResponseSchema.model_validate(m) for m in result.scalars().all()]
 

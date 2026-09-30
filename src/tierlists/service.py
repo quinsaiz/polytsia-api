@@ -2,7 +2,7 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,6 +23,7 @@ from src.tierlists.schemas import (
     AddTierListItemSchema,
     CreateTierListSchema,
     MoveTierListItemSchema,
+    RenameTierListSchema,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,10 @@ async def create_tier_list(
     stmt = (
         select(TierList)
         .where(TierList.id == tier_list.id)
-        .options(selectinload(TierList.items))
+        .options(
+            selectinload(TierList.items).joinedload(TierListItem.movie),
+            selectinload(TierList.items).joinedload(TierListItem.game),
+        )
     )
     result = await db.execute(stmt)
     created_tier_list = result.scalar_one()
@@ -58,7 +62,10 @@ async def get_tier_list_or_404(
     stmt = (
         select(TierList)
         .where(TierList.id == tier_list_id, TierList.user_id == user_id)
-        .options(selectinload(TierList.items))
+        .options(
+            selectinload(TierList.items).joinedload(TierListItem.movie),
+            selectinload(TierList.items).joinedload(TierListItem.game),
+        )
     )
     result = await db.execute(stmt)
     tier_list = result.scalar_one_or_none()
@@ -73,7 +80,10 @@ async def get_user_tier_lists(user_id: uuid.UUID, db: AsyncSession) -> list[Tier
     stmt = (
         select(TierList)
         .where(TierList.user_id == user_id)
-        .options(selectinload(TierList.items))
+        .options(
+            selectinload(TierList.items).joinedload(TierListItem.movie),
+            selectinload(TierList.items).joinedload(TierListItem.game),
+        )
         .order_by(TierList.created_at.desc(), TierList.id)
     )
     result = await db.execute(stmt)
@@ -216,6 +226,11 @@ async def delete_tracked_media_and_compact(
     await db.delete(tracked)
     await db.flush()
     for tier_list_id in affected_ids:
+        await db.execute(
+            update(TierList)
+            .where(TierList.id == tier_list_id)
+            .values(updated_at=func.now())
+        )
         items = await _list_items(tier_list_id, db)
         tiers: dict[str, list[TierListItem]] = {}
         for item in items:
@@ -255,6 +270,7 @@ async def add_item(
     )
     _place_item(tier_items, item, data.position)
     db.add(item)
+    tier_list.updated_at = func.now()
 
     try:
         await db.commit()
@@ -269,7 +285,7 @@ async def add_item(
             raise TierListItemNotFoundException() from error
         raise
 
-    await db.refresh(item)
+    await db.refresh(item, attribute_names=["movie", "game"])
 
     logger.info(
         "Item %s added to tier list %s for user %s",
@@ -308,9 +324,10 @@ async def move_item(
         current.position = position
     item.tier = data.tier
     _place_item(target, item, index)
+    tier_list.updated_at = func.now()
 
     await db.commit()
-    await db.refresh(item)
+    await db.refresh(item, attribute_names=["movie", "game"])
 
     logger.info(
         "Item %s moved to tier=%s position=%s",
@@ -339,7 +356,21 @@ async def delete_item(
     ]
     for position, current in enumerate(remaining):
         current.position = position
+    tier_list.updated_at = func.now()
     await db.delete(item)
     await db.commit()
 
     logger.info("Item %s removed from tier list %s", item.id, tier_list.id)
+
+
+async def rename_tier_list(
+    user_id: uuid.UUID,
+    tier_list_id: uuid.UUID,
+    data: RenameTierListSchema,
+    db: AsyncSession,
+) -> TierList:
+    tier_list = await _lock_tier_list_or_404(user_id, tier_list_id, db)
+    tier_list.name = data.name
+    tier_list.updated_at = func.now()
+    await db.commit()
+    return await get_tier_list_or_404(user_id, tier_list_id, db)

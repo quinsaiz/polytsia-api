@@ -28,6 +28,7 @@ from src.games.service import (
     track_game,
     update_user_game,
 )
+from src.library_query import GameLibraryQuery
 from src.pagination import PaginatedResponse, PaginationDep
 
 router = APIRouter(prefix="/games", tags=["games"])
@@ -110,8 +111,11 @@ async def list_my_games(
     current_user: CurrentUserDep,
     db: DbSessionDep,
     pagination: PaginationDep,
+    filters: Annotated[GameLibraryQuery, Query()],
 ) -> PaginatedResponse[UserGameResponseSchema]:
-    return await get_user_games(user_id=current_user.id, db=db, pagination=pagination)
+    return await get_user_games(
+        user_id=current_user.id, db=db, pagination=pagination, filters=filters
+    )
 
 
 @router.patch("/{user_game_id}", response_model=UserGameResponseSchema)
