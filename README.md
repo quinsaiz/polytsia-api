@@ -242,6 +242,42 @@ do not acquire an external HTTP client or use Redis. Both lookups are scoped to 
 same existing `404` (`Movie not found` / `Game not found`) for missing and foreign records. Public catalog GET
 routes still use integer catalog IDs and retain their existing responses.
 
+### Filter and sort your library
+
+`GET /api/v1/movies/` and `GET /api/v1/games/` retain the same paginated response
+(`items`, `total`, `page`, `page_size`, `total_pages`). All filters are combined with AND
+in PostgreSQL, scoped to the authenticated user before counting and pagination.
+
+| Query parameter | Contract |
+|---|---|
+| `status` | `planned`, `completed`, `dropped`, or `watching` (movies) / `playing` (games) |
+| `tier` | Tracking tier: `S`, `A`, `B`, `C`, `D`, `F` |
+| `rated` | `true`: personal rating is non-null; `false`: null; omitted: either |
+| `personal_rating` | Exact integer 0–10; zero counts as rated |
+| `query` | 1–200 characters; case-insensitive literal substring of stored `catalog_title` |
+| `sort_by` | `created_at` (default), `personal_rating`, `catalog_title` |
+| `sort_order` | `desc` (default) or `asc` |
+| `page`, `page_size` | Page >= 1 (default 1); size 1–100 (default 20) |
+
+Without new parameters, lists still return all own records, newest first. Every sort
+places nulls last in both directions and uses UUID `id ASC` as the secondary key.
+Title sorting uses PostgreSQL's database collation. Equal timestamps, ratings or titles
+therefore have stable pagination while the dataset remains unchanged; concurrent writes
+can still shift offset pages. Invalid enum values, sort controls, rating bounds or search
+length return 422. `rated=false&personal_rating=8` is a valid contradiction returning zero
+matches. Search is not a catalog request: `%`, `_` and backslashes are literal characters,
+whitespace is preserved, and null legacy titles never match a search. Without `query`,
+legacy rows remain visible and participate in other filters and sorts. Backfill makes
+their titles searchable; reads never initiate it.
+
+Examples (with a bearer token):
+
+```text
+GET /api/v1/movies/?status=completed&tier=A&rated=true&query=matrix&sort_by=personal_rating&sort_order=desc&page_size=10
+GET /api/v1/games/?status=planned&rated=false&sort_by=catalog_title&sort_order=asc&page=1
+GET /api/v1/movies/?personal_rating=0
+```
+
 ### Backfill existing library snapshots
 
 Apply `alembic upgrade head` before deploying the new application code. The nullable migration performs no
@@ -291,13 +327,32 @@ than repeatedly spending the request budget. Backfill has not implicitly been ru
 | POST   | `/api/v1/tierlists/`                               | Create a new tier list           |
 | GET    | `/api/v1/tierlists/`                               | List all tier lists              |
 | GET    | `/api/v1/tierlists/{tier_list_id}`                 | Get tier list with items         |
+| PATCH  | `/api/v1/tierlists/{tier_list_id}`                 | Rename a tier list               |
 | DELETE | `/api/v1/tierlists/{tier_list_id}`                 | Delete a tier list               |
 | POST   | `/api/v1/tierlists/{tier_list_id}/items`           | Add item to tier list            |
 | PATCH  | `/api/v1/tierlists/{tier_list_id}/items/{item_id}` | Move item (change tier/position) |
 | DELETE | `/api/v1/tierlists/{tier_list_id}/items/{item_id}` | Remove item from tier list       |
 
 All tier list endpoints require authentication. Items reference tracked movies or games by ID.
-Tier list names may contain at most 100 characters.
+Create and rename require a `name` of 1–100 characters after trimming leading/trailing whitespace. Rename uses
+`PATCH /api/v1/tierlists/{tier_list_id}` with `{"name":"Weekend favourites"}` and returns
+the complete list. Missing/null/blank/overlong names return 422. Missing and foreign lists
+both return the same private 404. Lists remain single-media; mixed movie/game lists are
+not supported.
+
+Every item response (including add and move) adds `summary` containing `media_type`
+(`movie` or `game`), `tracked_id`, `catalog_id` (TMDB or RAWG ID), `catalog_title`, `catalog_poster_path`,
+`catalog_background_image`, `catalog_release_date`, `catalog_metadata_fetched_at`, and
+`external_rating`. The tracked ID matches the existing `user_movie_id` or `user_game_id`.
+The image field for the other media type is null; movie posters remain TMDB paths and
+game images retain their stored URLs. Missing legacy metadata is null. Summaries read the
+current F1 snapshot from tracked records, with no copied metadata in items, no catalog
+HTTP/Redis calls, and a bounded SQL query count independent of item count.
+
+`updated_at` records successful rename (including the same name), add, move (including
+a no-op move), item removal, and removal caused by deleting tracked media. It uses the
+PostgreSQL transaction timestamp; operations in the same transaction can share a value.
+Snapshot backfill alone does not touch the list timestamp.
 Positions are zero-based and dense within each tier of each list. Adding an item at
 position `p` shifts items at `p` and later positions right. Moving an item closes
 its old position and opens its new position, including moves between tiers.
@@ -335,6 +390,26 @@ with RAWG's 0–5 candidate ratings. A candidate passes when its catalog rating 
 affect recommendations; the same tracked title may have different ranks in different lists. Every already tracked
 TMDB/RAWG ID is excluded, regardless of status. With fewer than three eligible records, `threshold` is `null`,
 `is_personalized` is `false`, and all untracked pool entries may be shown.
+
+These recommendations are **untracked, highly rated catalog titles filtered by a personal
+rating threshold**, not genre or behavioral personalization. Existing fields describe
+independent pool availability and personal eligibility; no new response fields are needed:
+
+| `pool_available` | `is_personalized` / `threshold` | Result meaning |
+|---|---|---|
+| false | either eligibility state | Pool missing, expired or Redis unavailable; results empty; HTTP 200 |
+| true | false / null | Fewer than three records with both rating and tracking tier; generic untracked pool |
+| true | true / number | Each returned item passed `rating >= threshold - 0.5` |
+| true | either, with empty results | Pool exists but is empty or no entries remain after tracked-ID exclusion and applicable threshold |
+
+A true personalization flag indicates an available threshold even if the pool is unavailable
+or no candidates survive; it does not promise a nonempty personalized result. Combined
+responses apply the same rules separately to movies and games. To become eligible, set
+both `personal_rating` and tracking `tier` on at least three records of that media type;
+completion status is not required. Omitting either field in PATCH preserves it; explicit
+null clears it and removes that record from eligibility. List ranks never supply eligibility.
+Equal candidate ratings retain their order in the shared pool. The stored tracked
+`external_rating` does not enter the threshold formula.
 
 Candidate pools are shared between users. Each refresh collects up to 100 unique titles per media type, fetching up
 to 20 pages or stopping when the source is exhausted. TMDB discovery sorts by vote average and requests at least
