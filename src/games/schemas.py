@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -66,6 +66,10 @@ class UserGameResponseSchema(BaseModel):
 
     id: uuid.UUID
     rawg_id: int
+    catalog_title: str | None = None
+    catalog_background_image: str | None = None
+    catalog_release_date: date | None = None
+    catalog_metadata_fetched_at: datetime | None = None
     status: PlayStatus
     personal_rating: int | None
     tier: TierRank | None

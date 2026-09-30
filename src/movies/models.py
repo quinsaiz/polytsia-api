@@ -1,8 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     UUID,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -28,6 +29,12 @@ class UserMovie(Base):
         index=True,
     )
     tmdb_id: Mapped[int] = mapped_column(Integer, index=True)
+    catalog_title: Mapped[str | None] = mapped_column(String)
+    catalog_poster_path: Mapped[str | None] = mapped_column(String)
+    catalog_release_date: Mapped[date | None] = mapped_column(Date)
+    catalog_metadata_fetched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     status: Mapped[str] = mapped_column(String(20), default=WatchStatus.PLANNED)
     personal_rating: Mapped[int | None] = mapped_column(Integer)
     tier: Mapped[str | None] = mapped_column(String(1))

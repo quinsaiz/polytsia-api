@@ -21,6 +21,8 @@ from src.games.service import (
     get_game_details,
     get_genres,
     get_platforms,
+    get_user_game_by_catalog_or_404,
+    get_user_game_or_404,
     get_user_games,
     search_games,
     track_game,
@@ -56,6 +58,26 @@ async def list_platforms(
     http_client: HttpClientDep, page: int = 1
 ) -> RAWGPlatformListSchema:
     return await get_platforms(http_client=http_client, page=page)
+
+
+@router.get("/tracked/by-catalog/{rawg_id}", response_model=UserGameResponseSchema)
+async def get_my_game_by_catalog(
+    rawg_id: int,
+    current_user: CurrentUserDep,
+    db: DbSessionDep,
+) -> UserGameResponseSchema:
+    record = await get_user_game_by_catalog_or_404(current_user.id, rawg_id, db)
+    return UserGameResponseSchema.model_validate(record)
+
+
+@router.get("/tracked/{user_game_id}", response_model=UserGameResponseSchema)
+async def get_my_game(
+    user_game_id: uuid.UUID,
+    current_user: CurrentUserDep,
+    db: DbSessionDep,
+) -> UserGameResponseSchema:
+    record = await get_user_game_or_404(current_user.id, user_game_id, db)
+    return UserGameResponseSchema.model_validate(record)
 
 
 @router.get("/{rawg_id}", response_model=RAWGGameSchema)

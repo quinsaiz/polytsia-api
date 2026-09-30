@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.catalog_snapshot import catalog_snapshot
 from src.config import settings
 from src.database import is_unique_constraint_violation
 from src.games.constants import (
@@ -138,10 +139,12 @@ async def search_games(
 async def get_game_details(
     rawg_id: int,
     http_client: httpx.AsyncClient,
+    *,
+    use_cache: bool = True,
 ) -> RAWGGameSchema:
     cache_key = f"rawg:game:{rawg_id}"
 
-    cached = await cache_get(cache_key)
+    cached = await cache_get(cache_key) if use_cache else None
     if cached is not None:
         logger.debug("Cache hit for game: %s", cache_key)
         return RAWGGameSchema.model_validate(cached)
@@ -162,7 +165,10 @@ async def get_game_details(
         _log_rawg_http_error("game detail", e)
         raise RAWGServiceUnavailableException() from None
 
-    await cache_set(cache_key, result.model_dump(mode="json"), GAME_DETAIL_CACHE_TTL)
+    if use_cache:
+        await cache_set(
+            cache_key, result.model_dump(mode="json"), GAME_DETAIL_CACHE_TTL
+        )
 
     return result
 
@@ -246,6 +252,7 @@ async def track_game(
         user_id=user_id,
         rawg_id=data.rawg_id,
         status=data.status,
+        **catalog_snapshot(game_details),
         external_rating=game_details.rating,
     )
     db.add(user_game)
@@ -307,6 +314,22 @@ async def get_user_game_or_404(
         raise GameNotFoundException()
 
     return user_game
+
+
+async def get_user_game_by_catalog_or_404(
+    user_id: uuid.UUID,
+    rawg_id: int,
+    db: AsyncSession,
+) -> UserGame:
+    record = await db.scalar(
+        select(UserGame).where(
+            UserGame.user_id == user_id,
+            UserGame.rawg_id == rawg_id,
+        )
+    )
+    if record is None:
+        raise GameNotFoundException()
+    return record
 
 
 async def update_user_game(

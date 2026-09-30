@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.catalog_snapshot import catalog_snapshot
 from src.config import settings
 from src.database import is_unique_constraint_violation
 from src.movies.constants import (
@@ -72,10 +73,12 @@ async def search_movies(
 async def get_movie_details(
     tmdb_id: int,
     http_client: httpx.AsyncClient,
+    *,
+    use_cache: bool = True,
 ) -> TMDBMovieSchema:
     cache_key = f"tmdb:movie:{tmdb_id}"
 
-    cached = await cache_get(cache_key)
+    cached = await cache_get(cache_key) if use_cache else None
     if cached is not None:
         logger.debug("Cache hit for movie: %s", cache_key)
         return TMDBMovieSchema.model_validate(cached)
@@ -92,10 +95,18 @@ async def get_movie_details(
     except InvalidUpstreamPayload:
         raise TMDBServiceUnavailableException() from None
     except httpx.HTTPError as e:
-        logger.error("TMDB movie detail request failed: %s", e)
-        raise TMDBServiceUnavailableException() from e
+        status = (
+            e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        )
+        logger.error(
+            "TMDB movie detail request failed: %s, status=%s", type(e).__name__, status
+        )
+        raise TMDBServiceUnavailableException() from None
 
-    await cache_set(cache_key, result.model_dump(mode="json"), MOVIE_DETAIL_CACHE_TTL)
+    if use_cache:
+        await cache_set(
+            cache_key, result.model_dump(mode="json"), MOVIE_DETAIL_CACHE_TTL
+        )
 
     return result
 
@@ -148,6 +159,7 @@ async def track_movie(
         user_id=user_id,
         tmdb_id=data.tmdb_id,
         status=data.status,
+        **catalog_snapshot(movie_details),
         external_rating=movie_details.vote_average,
     )
     db.add(user_movie)
@@ -209,6 +221,22 @@ async def get_user_movie_or_404(
         raise MovieNotFoundException()
 
     return user_movie
+
+
+async def get_user_movie_by_catalog_or_404(
+    user_id: uuid.UUID,
+    tmdb_id: int,
+    db: AsyncSession,
+) -> UserMovie:
+    record = await db.scalar(
+        select(UserMovie).where(
+            UserMovie.user_id == user_id,
+            UserMovie.tmdb_id == tmdb_id,
+        )
+    )
+    if record is None:
+        raise MovieNotFoundException()
+    return record
 
 
 async def update_user_movie(

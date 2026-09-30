@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -71,6 +71,10 @@ class UserMovieResponseSchema(BaseModel):
 
     id: uuid.UUID
     tmdb_id: int
+    catalog_title: str | None = None
+    catalog_poster_path: str | None = None
+    catalog_release_date: date | None = None
+    catalog_metadata_fetched_at: datetime | None = None
     status: WatchStatus
     personal_rating: int | None
     tier: TierRank | None
